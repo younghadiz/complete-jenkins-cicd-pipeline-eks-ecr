@@ -1,0 +1,74 @@
+# ------------------------------------------------------------
+# Java / Maven
+# ------------------------------------------------------------
+target/
+*.class
+*.jar
+*.war
+*.ear
+
+# Maven Wrapper / Maven local files
+.mvn/timing.properties
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+
+# ------------------------------------------------------------
+# IDEs / Editors
+# ------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+
+# ------------------------------------------------------------
+# macOS
+# ------------------------------------------------------------
+.DS_Store
+
+# ------------------------------------------------------------
+# Logs and temporary files
+# ------------------------------------------------------------
+*.log
+*.tmp
+*.swp
+*.swo
+
+# ------------------------------------------------------------
+# Environment and local configuration
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------
+# AWS / Kubernetes / Cloud credentials and local state
+# Never commit credentials, kubeconfig files or secrets.
+# ------------------------------------------------------------
+.aws/
+.kube/
+kubeconfig
+kubeconfig.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ------------------------------------------------------------
+# Terraform / Infrastructure state
+# Included for safety even though Terraform is not used in
+# this Nana-aligned version of the project.
+# ------------------------------------------------------------
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
+# ------------------------------------------------------------
+# Miscellaneous
+# ------------------------------------------------------------
+coverage/
+dist/
+tmp/
