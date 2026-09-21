@@ -1,4 +1,4 @@
-@Library('jenkins-shared-library@fix/eks-deployment-aws-credentials') _
+@Library('jenkins-shared-library') _
 
 singleServicePipeline(
     appName: 'java-maven-app',
