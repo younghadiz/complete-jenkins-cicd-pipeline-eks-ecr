@@ -9,11 +9,11 @@ singleServicePipeline(
 
     registryType: 'ecr',
 
-    imageName: '<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app',
+    imageName: '002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app',
 
     awsRegion: 'ca-central-1',
 
-    ecrRegistryServer: '<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com',
+    ecrRegistryServer: '002184382122.dkr.ecr.ca-central-1.amazonaws.com',
 
     ecrCredentialsId: 'aws_ecr_creds',
 
