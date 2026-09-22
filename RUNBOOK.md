@@ -24960,7 +24960,994 @@ RUNBOOK Phase 18
 🟡 Part 1 complete
 ```
 
-Phase 18 remains incomplete until all documentation files and documentation verification are finished.
+## 18.17 Troubleshooting Documentation
+
+Create:
+
+```text
+docs/troubleshooting.md
+```
+
+This file must preserve actual failures and observations encountered during the project.
+
+It should not be a generic list of every possible Jenkins, Docker, AWS or Kubernetes error.
+
+Verified project troubleshooting includes:
+
+```text
+incorrect JAR path
+→ NoSuchFileException
+
+local Docker stop
+→ Exit 143
+→ HTTP 000 after stop
+→ expected behavior
+
+Jenkins Git tool warning
+→ Selected Git installation does not exist
+→ recommended git tool NONE
+→ pipeline still succeeded
+
+EKS deployment
+→ NoCredentials / Unable to locate credentials
+→ AWS credential scope ended after ECR push
+→ Deploy stage needed its own credential binding
+
+kubectl rollout undo
+→ last-applied-configuration warning
+→ rollback still succeeded
+
+documentation branch push
+→ -u used for both remotes
+→ upstream changed to GitLab
+→ restore GitHub as primary upstream
+```
+
+Each troubleshooting entry should contain:
+
+```text
+symptom
+context
+root cause
+fix
+verification
+lesson learned
+```
+
+---
+
+## 18.18 Verification Evidence Documentation
+
+Create:
+
+```text
+docs/verification-evidence.md
+```
+
+The evidence document does not replace the runbook.
+
+Its purpose is to provide a concise verification index for:
+
+```text
+Git
+Maven
+Jenkins
+ECR
+EKS
+Kubernetes
+networking
+monitoring
+end-to-end testing
+rollback
+```
+
+The document should distinguish:
+
+```text
+stable expected configuration
+```
+
+from:
+
+```text
+historical generated identifiers
+```
+
+such as:
+
+```text
+Pod names
+Pod IPs
+ELB DNS names
+VPC IDs
+security-group IDs
+subnet IDs
+timestamps
+```
+
+Generated values should be labelled as historical observations rather than reusable configuration.
+
+---
+
+## 18.19 Future Improvements Documentation
+
+Create:
+
+```text
+docs/future-improvements.md
+```
+
+This document must contain improvements that were deliberately **not** folded into the verified Nana-aligned implementation.
+
+This separation is important.
+
+The current project should not be rewritten to appear as though it already uses:
+
+```text
+Terraform
+Helm
+Argo CD
+Prometheus
+Grafana
+ALB Ingress
+HTTPS
+OIDC
+short-lived AWS credentials
+multi-environment deployment
+```
+
+when it does not.
+
+The future-improvements document records how the project could evolve without altering historical truth.
+
+---
+
+## 18.20 Current vs Future Architecture
+
+Current:
+
+```text
+GitHub
+→ Jenkins
+→ Jenkins Shared Library
+→ Maven
+→ Docker
+→ ECR
+→ EKS
+→ Deployment
+→ LoadBalancer Service
+→ Classic ELB
+```
+
+Possible future direction:
+
+```text
+GitHub
+→ Jenkins / modern CI identity
+→ versioned shared library
+→ security scanning
+→ immutable ECR artifacts
+→ Infrastructure as Code
+→ EKS
+→ Helm / GitOps
+→ ALB + TLS
+→ observability
+```
+
+The second flow is not part of the completed project.
+
+---
+
+# Documentation Quality Verification
+
+## 18.21 Verify Required Files
+
+After creating all documentation:
+
+```bash
+for file in \
+  README.md \
+  RUNBOOK.md \
+  docs/architecture.md \
+  docs/troubleshooting.md \
+  docs/verification-evidence.md \
+  docs/future-improvements.md
+do
+  if [ -s "$file" ]; then
+    echo "PASS: $file"
+  else
+    echo "FAIL: $file missing or empty"
+    exit 1
+  fi
+done
+```
+
+All six files must report:
+
+```text
+PASS
+```
+
+---
+
+## 18.22 Verify Runbook Phase Order
+
+Run:
+
+```bash
+grep -nE \
+  '^# (1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20)\.' \
+  RUNBOOK.md
+```
+
+Expected logical order:
+
+```text
+1. Requirements
+2. Repository Setup
+3. Local Environment
+4. Application Build
+5. Automated Tests
+6. Artifact Creation
+7. Containerization
+8. Local Container Testing
+9. Pipeline Preparation
+10. Infrastructure Preparation
+11. Security Configuration
+12. Server and Cloud Provisioning
+13. Deployment
+14. Networking
+15. Monitoring
+16. End-to-End Testing
+17. Rollback
+18. Documentation
+19. Release
+20. Cleanup
+```
+
+There must be no competing second implementation order.
+
+---
+
+## 18.23 Verify README Links
+
+Run:
+
+```bash
+grep -nE \
+  'RUNBOOK\.md|docs/architecture\.md|docs/troubleshooting\.md|docs/verification-evidence\.md|docs/future-improvements\.md' \
+  README.md
+```
+
+Expected references to all detailed documents.
+
+Then verify each destination exists:
+
+```bash
+test -f RUNBOOK.md
+test -f docs/architecture.md
+test -f docs/troubleshooting.md
+test -f docs/verification-evidence.md
+test -f docs/future-improvements.md
+
+echo "PASS: README documentation links have local targets."
+```
+
+---
+
+## 18.24 Verify Attribution
+
+Run:
+
+```bash
+grep -nE \
+  'TechWorld with Nana|starting-code|f2a092e5375f015993151d078df7dc5dc0deae79' \
+  README.md \
+  RUNBOOK.md
+```
+
+The documentation must continue to attribute the supplied baseline application correctly.
+
+---
+
+## 18.25 Verify Project Identity
+
+Run:
+
+```bash
+grep -R \
+  --line-number \
+  -E 'java-maven-app|java-maven-eks|java-maven-nodes|ca-central-1' \
+  README.md \
+  RUNBOOK.md \
+  docs
+```
+
+Review the results for accidental use of unrelated historical project names.
+
+Do not automatically assume every match is correct.
+
+---
+
+## 18.26 Verify No Unrelated Infrastructure Was Added
+
+Search:
+
+```bash
+grep -R \
+  --line-number \
+  -E 'java-mysql-eks|java-mysql-eks-platform' \
+  README.md \
+  RUNBOOK.md \
+  docs \
+  || echo "PASS: unrelated EKS project names not found."
+```
+
+Those names belong to different training exercises and must not be presented as this capstone infrastructure.
+
+---
+
+## 18.27 Search for Stale README Status
+
+Run:
+
+```bash
+grep -R \
+  --line-number \
+  'Phase 2 — Repository Setup: In progress' \
+  README.md \
+  docs \
+  || echo "PASS: stale README status removed."
+```
+
+---
+
+# Secret Review
+
+## 18.28 Search Documentation for Secret-Like Material
+
+Run a basic scan:
+
+```bash
+grep -R \
+  --line-number \
+  -E \
+  'AWS_SECRET_ACCESS_KEY[[:space:]]*=|AWS_ACCESS_KEY_ID[[:space:]]*=|ghp_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]+|BEGIN (RSA |OPENSSH |EC )?PRIVATE KEY' \
+  README.md \
+  RUNBOOK.md \
+  docs \
+  || echo "PASS: no obvious secret values found."
+```
+
+References such as:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+github-token
+aws_ecr_creds
+```
+
+are allowed when documenting variable or credential IDs.
+
+Actual values are not.
+
+---
+
+## 18.29 Verify Secret Files Are Not Tracked
+
+Run:
+
+```bash
+git ls-files \
+  | grep -E \
+  '(^|/)(\.env|credentials|kubeconfig|config)$|\.pem$|\.key$' \
+  || echo "PASS: no obvious secret files tracked."
+```
+
+Review any match manually.
+
+For example:
+
+```text
+src/main/resources/application.properties
+```
+
+would not automatically be a secret merely because it contains the word `config`.
+
+---
+
+# Documentation Markdown Verification
+
+## 18.30 Git Whitespace Check
+
+Run:
+
+```bash
+git diff --check
+```
+
+No output means the check passed.
+
+---
+
+## 18.31 Inspect Markdown Headings
+
+```bash
+for file in \
+  README.md \
+  RUNBOOK.md \
+  docs/architecture.md \
+  docs/troubleshooting.md \
+  docs/verification-evidence.md \
+  docs/future-improvements.md
+do
+  echo
+  echo "============================================================"
+  echo "$file"
+  echo "============================================================"
+
+  grep -n '^#' "$file"
+done
+```
+
+Look for:
+
+```text
+broken nesting
+duplicate accidental headings
+missing file titles
+unfinished placeholders
+```
+
+---
+
+## 18.32 Search for Remaining Placeholders
+
+Run:
+
+```bash
+grep -R \
+  --line-number \
+  -E \
+  'To be documented|TODO|FIXME|<INSERT|Original detail currently unavailable' \
+  README.md \
+  RUNBOOK.md \
+  docs \
+  || true
+```
+
+Interpret results carefully.
+
+`Original detail currently unavailable.` is allowed where the exact historical command genuinely could not be recovered.
+
+A Phase 19 or Phase 20 placeholder is also expected until those phases are completed.
+
+Do not replace unrecovered historical detail with invented commands merely to eliminate the phrase.
+
+---
+
+# Documentation Accuracy Review
+
+## 18.33 Verify Current Implementation Files Against Documentation
+
+Inspect the actual files:
+
+```bash
+for file in \
+  pom.xml \
+  Dockerfile \
+  Jenkinsfile \
+  kubernetes/deployment.yaml \
+  kubernetes/service.yaml
+do
+  echo
+  echo "============================================================"
+  echo "$file"
+  echo "============================================================"
+  cat "$file"
+done
+```
+
+Compare them against:
+
+```text
+README.md
+RUNBOOK.md
+docs/architecture.md
+```
+
+The documentation must describe the implementation that actually exists.
+
+---
+
+## 18.34 Verify Maven Version
+
+Run:
+
+```bash
+mvn help:evaluate \
+  -Dexpression=project.version \
+  -q \
+  -DforceStdout
+```
+
+Verified project version:
+
+```text
+1.1.1
+```
+
+Documentation must not describe `1.1.0-SNAPSHOT` as the final current project version.
+
+It remains relevant only as historical/pre-pipeline state.
+
+---
+
+## 18.35 Verify Jenkinsfile Parameters
+
+Run:
+
+```bash
+cat Jenkinsfile
+```
+
+Confirm documentation matches:
+
+```text
+appName:
+java-maven-app
+
+registryType:
+ecr
+
+awsRegion:
+ca-central-1
+
+manifestDir:
+kubernetes
+
+namespace:
+default
+
+ecrCredentialsId:
+aws_ecr_creds
+
+gitCredentialsId:
+github-token
+```
+
+---
+
+## 18.36 Verify Kubernetes Manifests
+
+Run:
+
+```bash
+cat kubernetes/deployment.yaml
+
+cat kubernetes/service.yaml
+```
+
+Confirm:
+
+```text
+replicas:
+1
+
+containerPort:
+8080
+
+imagePullPolicy:
+Always
+
+Service:
+LoadBalancer
+
+Service port:
+80
+
+targetPort:
+8080
+```
+
+Do not document readiness probes, resource limits, Ingress or TLS as current implementation because they are not present.
+
+---
+
+# Evidence Classification
+
+## 18.37 Stable Configuration
+
+These values are suitable for project documentation:
+
+```text
+application:
+java-maven-app
+
+AWS region:
+ca-central-1
+
+ECR repository:
+java-maven-app
+
+EKS cluster:
+java-maven-eks
+
+nodegroup:
+java-maven-nodes
+
+node type:
+t3.small
+
+namespace:
+default
+
+Service type:
+LoadBalancer
+
+container port:
+8080
+
+Service port:
+80
+```
+
+---
+
+## 18.38 Historical Generated Values
+
+These should be clearly identified as historical observations:
+
+```text
+Pod names
+
+Pod IP:
+192.168.50.149
+
+ClusterIP:
+10.100.197.178
+
+NodePort:
+30321
+
+Classic ELB hostname
+
+ELB-generated name
+
+VPC ID
+
+subnet IDs
+
+security-group IDs
+
+EKS API endpoint
+
+timestamps
+```
+
+A recreated environment may produce different values.
+
+---
+
+## 18.39 Verified Historical Version Evidence
+
+These values are useful historical evidence:
+
+```text
+final application Git commit:
+09c96af
+
+final Maven version:
+1.1.1
+
+verified image:
+1.1.1-2
+
+verified current image digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+verified rollback image:
+1.1.1-1
+
+verified rollback digest:
+sha256:4878a7f7d6b67f10149459944b0f76c07a88d5421f1ee1cb069d53108bc76efe
+```
+
+They should be described as verified project evidence rather than universal configuration.
+
+---
+
+# Documentation Git Workflow
+
+## 18.40 Review All Documentation Changes
+
+Run:
+
+```bash
+git status
+
+git diff --stat
+
+git diff --check
+```
+
+Then review:
+
+```bash
+git diff -- \
+  README.md \
+  RUNBOOK.md \
+  docs/architecture.md \
+  docs/troubleshooting.md \
+  docs/verification-evidence.md \
+  docs/future-improvements.md
+```
+
+For new untracked files:
+
+```bash
+cat docs/troubleshooting.md
+cat docs/verification-evidence.md
+cat docs/future-improvements.md
+```
+
+---
+
+## 18.41 Stage Only Documentation
+
+Stage:
+
+```bash
+git add \
+  README.md \
+  RUNBOOK.md \
+  docs/architecture.md \
+  docs/troubleshooting.md \
+  docs/verification-evidence.md \
+  docs/future-improvements.md
+```
+
+Then:
+
+```bash
+git status
+
+git diff --cached --stat
+
+git diff --cached --check
+```
+
+No application source or infrastructure manifest should change during this documentation-only commit unless an actual documentation-discovered defect intentionally requires a separate fix.
+
+---
+
+## 18.42 Documentation Commit
+
+Commit:
+
+```bash
+git commit \
+  -m "docs: complete project documentation"
+```
+
+Do not invent the commit hash in the runbook before Git produces it.
+
+Record the actual hash after commit:
+
+```bash
+git log \
+  -1 \
+  --oneline
+```
+
+---
+
+## 18.43 Push Primary First
+
+Push:
+
+```bash
+git push \
+  github \
+  docs/complete-project-documentation
+```
+
+Do not use:
+
+```text
+-u
+```
+
+again if the branch already tracks GitHub.
+
+---
+
+## 18.44 Mirror to GitLab
+
+Push:
+
+```bash
+git push \
+  gitlab \
+  docs/complete-project-documentation
+```
+
+Do not use:
+
+```text
+-u
+```
+
+for the mirror.
+
+The local branch should continue tracking GitHub.
+
+---
+
+## 18.45 Verify Documentation Branch Synchronization
+
+Run:
+
+```bash
+git fetch github
+git fetch gitlab
+
+printf 'Local:  '
+git rev-parse docs/complete-project-documentation
+
+printf 'GitHub: '
+git rev-parse github/docs/complete-project-documentation
+
+printf 'GitLab: '
+git rev-parse gitlab/docs/complete-project-documentation
+```
+
+All three hashes must match.
+
+Then verify upstream:
+
+```bash
+git rev-parse \
+  --abbrev-ref \
+  --symbolic-full-name \
+  '@{u}'
+```
+
+Expected:
+
+```text
+github/docs/complete-project-documentation
+```
+
+---
+
+# Documentation Completion Checklist
+
+## 18.46 Checklist
+
+```text
+[ ] README.md updated from stale project status
+[ ] application attribution preserved
+[ ] project objective documented
+[ ] technology stack documented
+[ ] repository strategy documented
+[ ] pipeline flow documented
+[ ] verified AWS/Kubernetes state summarized
+[ ] rollback summarized
+[ ] security limitations documented
+[ ] monitoring scope documented
+
+[ ] RUNBOOK.md remains complete rebuild manual
+[ ] all 20 phase headings remain in correct order
+
+[ ] docs/architecture.md created
+[ ] current architecture documented
+[ ] Jenkins Shared Library architecture documented
+[ ] CI/CD flow documented
+[ ] ECR/EKS flow documented
+[ ] network path documented
+[ ] monitoring architecture documented
+[ ] rollback architecture documented
+
+[ ] docs/troubleshooting.md created
+[ ] real project failures preserved
+[ ] root causes preserved
+[ ] fixes preserved
+[ ] non-errors distinguished from failures
+
+[ ] docs/verification-evidence.md created
+[ ] Git evidence documented
+[ ] Jenkins evidence documented
+[ ] ECR evidence documented
+[ ] EKS evidence documented
+[ ] Kubernetes evidence documented
+[ ] ELB evidence documented
+[ ] HTTP evidence documented
+[ ] rollback evidence documented
+
+[ ] docs/future-improvements.md created
+[ ] current implementation separated from future improvements
+[ ] production security improvements documented
+[ ] observability improvements documented
+[ ] deployment improvements documented
+[ ] Infrastructure-as-Code improvement documented
+
+[ ] no secrets added
+[ ] no unrelated project resources added
+[ ] stale README status removed
+[ ] git diff --check passes
+[ ] documentation-only files staged
+[ ] documentation branch synchronized to GitHub
+[ ] documentation branch synchronized to GitLab
+[ ] GitHub remains primary upstream
+```
+
+---
+
+## 18.47 Final Documentation Structure
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr/
+├── README.md
+├── RUNBOOK.md
+│
+├── docs/
+│   ├── architecture.md
+│   ├── troubleshooting.md
+│   ├── verification-evidence.md
+│   └── future-improvements.md
+│
+├── Jenkinsfile
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── pom.xml
+│
+├── kubernetes/
+│   ├── deployment.yaml
+│   └── service.yaml
+│
+└── src/
+```
+
+---
+
+## 18.48 Phase 18 Final State
+
+```text
+README
+✅
+
+Complete rebuild runbook
+✅
+
+Architecture documentation
+✅
+
+Troubleshooting documentation
+✅
+
+Verification-evidence documentation
+✅
+
+Future-improvement documentation
+✅
+
+Attribution
+✅
+
+Secret review
+✅
+
+Implementation/documentation consistency review
+✅
+
+dual-remote documentation branch
+✅
+```
+
+**Documentation is complete.**
 
 ---
 
