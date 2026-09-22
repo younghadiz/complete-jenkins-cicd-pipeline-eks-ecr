@@ -19575,7 +19575,1747 @@ cost documented
 
 # 15. Monitoring
 
-To be documented in a later verified documentation batch.
+## 15.1 Objective
+
+Verify that the deployed application and its supporting Kubernetes/AWS infrastructure remain healthy after deployment.
+
+The monitoring approach used in this capstone is intentionally simple and follows the learning scope of the project.
+
+Verified monitoring sources include:
+
+```text
+Jenkins console output
+Kubernetes Deployment status
+Kubernetes Pod status
+application container logs
+Kubernetes events
+kubectl describe
+kubectl top
+Metrics Server
+EKS node health
+Classic ELB backend health
+Classic ELB health-check configuration
+EKS cluster state
+external HTTP verification
+```
+
+The project does **not** currently deploy a dedicated observability platform such as:
+
+```text
+Prometheus
+Grafana
+Loki
+ELK / OpenSearch
+CloudWatch Container Insights
+Datadog
+New Relic
+```
+
+Those are future improvements.
+
+---
+
+## 15.2 Monitoring Layers
+
+The application should be observed layer-by-layer:
+
+```text
+CI/CD
+│
+└── Jenkins
+      ↓
+Container Registry
+│
+└── Amazon ECR
+      ↓
+Kubernetes
+│
+├── Deployment
+├── ReplicaSet
+├── Pod
+├── Service
+├── EndpointSlice
+└── Events
+      ↓
+Application
+│
+└── Spring Boot logs
+      ↓
+Infrastructure
+│
+├── EKS node
+├── CPU / memory
+└── node conditions
+      ↓
+Networking
+│
+└── Classic ELB
+      ↓
+External User
+│
+└── HTTP request
+```
+
+Do not rely on only one layer.
+
+For example:
+
+```text
+Jenkins SUCCESS
+```
+
+does not by itself prove that the application is still healthy later.
+
+---
+
+# Jenkins Monitoring
+
+## 15.3 Jenkins Pipeline Result
+
+The final successful pipeline ended with:
+
+```text
+Pipeline finished.
+
+Pipeline completed successfully.
+
+Finished: SUCCESS
+```
+
+Jenkins console output is the first monitoring source for CI/CD execution.
+
+Review:
+
+```text
+checkout
+version increment
+tests
+artifact creation
+Docker build
+ECR push
+Kubernetes apply
+rollout
+Git commit-back
+post actions
+```
+
+A pipeline stage failure should be investigated at the stage where it occurred rather than starting with unrelated infrastructure.
+
+---
+
+## 15.4 Jenkins Stage View
+
+The expected application pipeline stages are:
+
+```text
+Increment Version
+Build Application
+Build Docker Image
+Push Docker Image
+Deploy
+Commit Version Update
+```
+
+Jenkins Declarative Pipeline also shows internal stages such as:
+
+```text
+Checkout SCM
+Tool Install
+Post Actions
+```
+
+Use the Stage View to quickly identify where a failure occurred.
+
+---
+
+# Deployment Monitoring
+
+## 15.5 Check Deployment Health
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified healthy state:
+
+```text
+READY:
+1/1
+
+UP-TO-DATE:
+1
+
+AVAILABLE:
+1
+```
+
+Verified image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+---
+
+## 15.6 Describe the Deployment
+
+Run:
+
+```bash
+kubectl describe deployment \
+  java-maven-app \
+  --namespace default
+```
+
+Inspect:
+
+```text
+replicas
+availability
+conditions
+current image
+old ReplicaSet
+new ReplicaSet
+deployment events
+```
+
+The verified rollout showed the new ReplicaSet scaling to one replica and the previous ReplicaSet scaling to zero.
+
+---
+
+# Pod Monitoring
+
+## 15.7 Check Pod Health
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Verified application Pod:
+
+```text
+READY:
+1/1
+
+STATUS:
+Running
+
+RESTARTS:
+0
+```
+
+A healthy application should normally remain:
+
+```text
+Running
+Ready=true
+```
+
+with no unexplained restart growth.
+
+---
+
+## 15.8 Inspect Detailed Pod State
+
+Run:
+
+```bash
+kubectl describe pod \
+  "$(kubectl get pods \
+      --namespace default \
+      -l app=java-maven-app \
+      -o jsonpath='{.items[0].metadata.name}')" \
+  --namespace default
+```
+
+Review:
+
+```text
+image
+container state
+restart count
+Pod IP
+node assignment
+conditions
+events
+image-pull events
+```
+
+---
+
+## 15.9 Verify Exact Runtime Image
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+```
+
+Verified state:
+
+```text
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+Verified digest:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+Monitoring the digest is useful because it proves the runtime is using the expected immutable image content even if tags are mutable in ECR.
+
+---
+
+# Application Logs
+
+## 15.10 Read Application Logs
+
+Run:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+Verified logs contained:
+
+```text
+Spring Boot 3.5.5
+
+Starting Application using Java 17.0.20
+
+Tomcat initialized with port 8080
+
+Java app started
+
+Tomcat started on port 8080
+
+Started Application
+```
+
+This confirms successful application startup.
+
+---
+
+## 15.11 Important Application Log Details
+
+The verified log showed:
+
+```text
+/app/app.jar
+```
+
+running with:
+
+```text
+PID 1
+```
+
+inside the container.
+
+It also showed:
+
+```text
+started by root
+```
+
+which supports the previously documented security limitation:
+
+```text
+container does not explicitly run as a non-root user
+```
+
+That is a future container-hardening improvement.
+
+---
+
+## 15.12 Follow Logs in Real Time
+
+For active troubleshooting:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --follow
+```
+
+Stop streaming with:
+
+```text
+Ctrl+C
+```
+
+Do not confuse stopping the local `kubectl logs --follow` command with stopping the application Pod.
+
+---
+
+## 15.13 Tail More Logs When Needed
+
+Examples:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=200
+```
+
+or:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --since=10m
+```
+
+These are useful when investigating recent failures without reading the entire container history.
+
+---
+
+# Previous Container Logs
+
+## 15.14 Check Previous Container Logs
+
+If a container restarted:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --previous \
+  --tail=50
+```
+
+The verified application returned:
+
+```text
+previous terminated container "java-maven-app" ... not found
+```
+
+This was expected because the current Pod had:
+
+```text
+Restarts:
+0
+```
+
+and therefore had no previous terminated container log for that Pod.
+
+This message is not itself an application failure.
+
+---
+
+## 15.15 When `--previous` Is Useful
+
+Use:
+
+```bash
+kubectl logs ... --previous
+```
+
+when a container has:
+
+```text
+RestartCount > 0
+```
+
+For example:
+
+```text
+CrashLoopBackOff
+application crash
+OOMKilled
+runtime exception
+```
+
+It can show the logs from the previous failed container instance.
+
+---
+
+# Kubernetes Events
+
+## 15.16 Review Recent Events
+
+Run:
+
+```bash
+kubectl get events \
+  --namespace default \
+  --sort-by='.metadata.creationTimestamp'
+```
+
+Verified normal events included:
+
+```text
+Scheduled
+SuccessfulCreate
+ScalingReplicaSet
+Pulling
+Pulled
+Created
+Started
+Killing
+SuccessfulDelete
+```
+
+---
+
+## 15.17 Verified Image Pull Event
+
+The application image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+was successfully pulled.
+
+The recorded image size was approximately:
+
+```text
+130,788,187 bytes
+```
+
+The image was pulled in approximately:
+
+```text
+814 ms
+```
+
+in that particular execution.
+
+These timing values are historical observations, not permanent performance requirements.
+
+---
+
+## 15.18 Why Events Matter
+
+Events often reveal Kubernetes problems before application logs do.
+
+Examples:
+
+```text
+FailedScheduling
+FailedMount
+ErrImagePull
+ImagePullBackOff
+BackOff
+Unhealthy
+FailedCreate
+FailedKillPod
+```
+
+Therefore a standard troubleshooting sequence should include:
+
+```bash
+kubectl get events \
+  --namespace default \
+  --sort-by='.metadata.creationTimestamp'
+```
+
+---
+
+# Resource Metrics
+
+## 15.19 Metrics Server
+
+`kubectl top` requires Kubernetes resource metrics.
+
+The verified cluster contained Metrics Server pods in:
+
+```text
+kube-system
+```
+
+including two `metrics-server` replicas.
+
+Therefore:
+
+```bash
+kubectl top pod
+```
+
+and:
+
+```bash
+kubectl top node
+```
+
+worked successfully.
+
+---
+
+## 15.20 Verify Metrics Server
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace kube-system \
+  | grep metrics-server
+```
+
+Expected:
+
+```text
+metrics-server...
+```
+
+For a broader check:
+
+```bash
+kubectl get deployment \
+  --namespace kube-system \
+  metrics-server
+```
+
+If Metrics Server is unavailable:
+
+```text
+kubectl top
+```
+
+may report that the Metrics API is unavailable.
+
+---
+
+## 15.21 Pod CPU and Memory
+
+Run:
+
+```bash
+kubectl top pod \
+  --namespace default \
+  -l app=java-maven-app
+```
+
+Verified observation:
+
+```text
+CPU:
+2m
+
+Memory:
+150Mi
+```
+
+This is a point-in-time measurement.
+
+It is not a guaranteed fixed consumption value.
+
+---
+
+## 15.22 Interpret `2m` CPU
+
+Kubernetes CPU units:
+
+```text
+1000m
+=
+1 CPU core
+```
+
+Therefore:
+
+```text
+2m
+```
+
+means approximately:
+
+```text
+0.002 CPU cores
+```
+
+at the time the metric was sampled.
+
+---
+
+## 15.23 Node CPU and Memory
+
+Run:
+
+```bash
+kubectl top node
+```
+
+Verified node observation:
+
+```text
+CPU:
+43m
+
+CPU percentage:
+2%
+
+Memory:
+830Mi
+
+Memory percentage:
+57%
+```
+
+Again, these are historical point-in-time observations.
+
+---
+
+# Resource Requests and Limits
+
+## 15.24 Application Resource Configuration
+
+The current application Deployment does not specify:
+
+```yaml
+resources:
+  requests:
+  limits:
+```
+
+The verified node description therefore showed the application Pod with:
+
+```text
+CPU Requests:
+0
+
+CPU Limits:
+0
+
+Memory Requests:
+0
+
+Memory Limits:
+0
+```
+
+This is a known basic-training limitation.
+
+---
+
+## 15.25 Why Requests and Limits Matter
+
+Without requests, Kubernetes has less information for scheduling.
+
+Without limits, the application has no explicit Kubernetes-enforced CPU/memory ceiling.
+
+A future improvement could add something such as:
+
+```yaml
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+```
+
+These values are examples only.
+
+They were **not** part of the verified capstone and should be sized using real measurements.
+
+---
+
+# Node Health
+
+## 15.26 Check Node State
+
+Run:
+
+```bash
+kubectl get nodes \
+  -o wide
+```
+
+Verified:
+
+```text
+STATUS:
+Ready
+
+Instance:
+t3.small
+
+Architecture:
+amd64
+
+OS:
+Amazon Linux 2023
+
+Runtime:
+containerd
+```
+
+---
+
+## 15.27 Inspect Node Conditions
+
+Run:
+
+```bash
+kubectl describe node \
+  ip-192-168-60-182.ca-central-1.compute.internal
+```
+
+Verified healthy conditions:
+
+```text
+MemoryPressure:
+False
+
+DiskPressure:
+False
+
+PIDPressure:
+False
+
+Ready:
+True
+```
+
+A node can exist while still being unhealthy.
+
+Always verify:
+
+```text
+Ready=True
+```
+
+rather than relying only on EC2 existence.
+
+---
+
+## 15.28 Node Events
+
+The verified node showed:
+
+```text
+Events:
+<none>
+```
+
+at the time of monitoring.
+
+This indicates there were no recent node-level Kubernetes events requiring attention at that moment.
+
+---
+
+# ELB Monitoring
+
+## 15.29 Classic ELB Backend Health
+
+Run:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --output table
+```
+
+Verified:
+
+```text
+State:
+InService
+```
+
+This means the Classic ELB considered the registered EKS worker healthy.
+
+---
+
+## 15.30 ELB Health Check
+
+Run:
+
+```bash
+aws elb describe-load-balancers \
+  --load-balancer-names a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[0].HealthCheck' \
+  --output table
+```
+
+Verified:
+
+```text
+Target:
+TCP:30321
+
+Interval:
+10
+
+Timeout:
+5
+
+HealthyThreshold:
+2
+
+UnhealthyThreshold:
+6
+```
+
+The health-check target matches the Kubernetes Service's allocated NodePort:
+
+```text
+30321
+```
+
+---
+
+## 15.31 Monitor ELB and Kubernetes Together
+
+When external access fails, check both:
+
+```text
+AWS Classic ELB
+and
+Kubernetes Service / EndpointSlice
+```
+
+Example sequence:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1
+```
+
+then:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+then:
+
+```bash
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+A healthy Pod does not guarantee a healthy load-balancer route.
+
+---
+
+# External Availability Monitoring
+
+## 15.32 Retrieve Endpoint Dynamically
+
+```bash
+export APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+```
+
+---
+
+## 15.33 HTTP Status Check
+
+Run:
+
+```bash
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Verified:
+
+```text
+HTTP status:
+200
+```
+
+---
+
+## 15.34 Application Content Check
+
+Run:
+
+```bash
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Expected:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+Monitoring content is stronger than only checking that TCP port 80 accepts connections.
+
+---
+
+# EKS Control Plane Monitoring
+
+## 15.35 Check EKS Control Plane Logging
+
+Run:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --query 'cluster.logging.clusterLogging' \
+  --output json
+```
+
+Verified:
+
+```text
+api
+audit
+authenticator
+controllerManager
+scheduler
+```
+
+were all configured with:
+
+```text
+enabled:
+false
+```
+
+---
+
+## 15.36 Verify CloudWatch EKS Log Groups
+
+Run:
+
+```bash
+aws logs describe-log-groups \
+  --log-group-name-prefix '/aws/eks/java-maven-eks' \
+  --region ca-central-1 \
+  --query 'logGroups[].{
+    Name:logGroupName,
+    Retention:retentionInDays,
+    StoredBytes:storedBytes
+  }' \
+  --output table
+```
+
+The verified project returned no matching EKS control-plane CloudWatch log group.
+
+This is consistent with control-plane logging being disabled.
+
+---
+
+## 15.37 Current Monitoring Limitation
+
+Because EKS control-plane logging is disabled, the project does not currently retain CloudWatch control-plane logs for:
+
+```text
+API server
+audit
+authenticator
+controller manager
+scheduler
+```
+
+This limits deeper historical cluster troubleshooting.
+
+---
+
+## 15.38 Future EKS Logging Improvement
+
+A future production improvement is to enable relevant EKS control-plane log types and define an appropriate CloudWatch retention policy.
+
+Possible categories:
+
+```text
+api
+audit
+authenticator
+controllerManager
+scheduler
+```
+
+Enabling them may increase CloudWatch ingestion/storage costs.
+
+Do not enable all logging automatically without understanding the operational and cost requirement.
+
+---
+
+# Prometheus and Grafana
+
+## 15.39 Not Used in This Capstone
+
+Although Prometheus and Grafana are important tools elsewhere in the DevOps training, they were **not deployed as part of this specific capstone**.
+
+Therefore the runbook must not claim:
+
+```text
+Prometheus monitoring implemented
+Grafana dashboards implemented
+```
+
+for this project.
+
+Current monitoring uses:
+
+```text
+kubectl
+Metrics Server
+application logs
+AWS ELB health
+AWS/EKS status
+external HTTP checks
+```
+
+---
+
+## 15.40 Future Prometheus/Grafana Improvement
+
+A future observability version could introduce:
+
+```text
+Prometheus
+→ scrape Kubernetes/application metrics
+
+Grafana
+→ visualize metrics
+
+Alertmanager
+→ notify on thresholds
+```
+
+Possible application metrics could include:
+
+```text
+request rate
+latency
+HTTP errors
+JVM memory
+JVM garbage collection
+CPU
+container restarts
+```
+
+That is outside the current Nana-aligned capstone.
+
+---
+
+# Application Health Probes
+
+## 15.41 Current Probe Limitation
+
+The current `deployment.yaml` does not configure:
+
+```text
+livenessProbe
+readinessProbe
+startupProbe
+```
+
+The Pod may therefore be marked ready based primarily on normal container/Kubernetes state rather than an application-specific HTTP health endpoint.
+
+This is a known limitation.
+
+---
+
+## 15.42 Future Probe Improvement
+
+A future version could expose a dedicated application health endpoint, for example through Spring Boot Actuator, and configure Kubernetes:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8080
+```
+
+and:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /actuator/health
+    port: 8080
+```
+
+This is a future improvement only.
+
+The current application does not contain the required Actuator dependency/configuration.
+
+---
+
+# Monitoring Troubleshooting
+
+## 15.43 `kubectl top` Fails
+
+Possible message:
+
+```text
+Metrics API not available
+```
+
+Check:
+
+```bash
+kubectl get pods \
+  --namespace kube-system \
+  | grep metrics-server
+```
+
+Then inspect:
+
+```bash
+kubectl describe deployment \
+  metrics-server \
+  --namespace kube-system
+```
+
+Do not treat `kubectl top` failure as proof that the application itself is down.
+
+---
+
+## 15.44 Application Logs Show Startup Failure
+
+Inspect:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=200
+```
+
+Then:
+
+```bash
+kubectl describe pods \
+  --namespace default \
+  -l app=java-maven-app
+```
+
+Look for:
+
+```text
+Java exception
+port error
+image issue
+OOMKilled
+CrashLoopBackOff
+probe failure
+```
+
+---
+
+## 15.45 Pod Restarts Increasing
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app
+```
+
+If:
+
+```text
+RESTARTS > 0
+```
+
+then inspect current logs:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+and previous logs:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --previous
+```
+
+---
+
+## 15.46 Node Memory High
+
+Run:
+
+```bash
+kubectl top node
+```
+
+Then:
+
+```bash
+kubectl describe node \
+  ip-192-168-60-182.ca-central-1.compute.internal
+```
+
+Review:
+
+```text
+memory utilization
+MemoryPressure
+Pod requests/limits
+non-terminated Pods
+```
+
+The verified historical node measurement was:
+
+```text
+830Mi
+57%
+```
+
+which was not itself an emergency condition.
+
+---
+
+## 15.47 External HTTP Fails but Pod Looks Healthy
+
+Check:
+
+```text
+Service
+EndpointSlice
+ELB backend
+ELB DNS
+HTTP request
+```
+
+Commands:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+Then:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1
+```
+
+---
+
+## 15.48 EKS Control Plane Problem
+
+If cluster-level API behavior is abnormal:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1
+```
+
+Then:
+
+```bash
+kubectl cluster-info
+```
+
+Current control-plane logging is disabled, so deeper historical API/audit troubleshooting may require enabling EKS logging first.
+
+---
+
+# Monitoring Evidence
+
+## 15.49 Application Evidence
+
+Capture:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+---
+
+## 15.50 Events Evidence
+
+Capture:
+
+```bash
+kubectl get events \
+  --namespace default \
+  --sort-by='.metadata.creationTimestamp'
+```
+
+Look for normal:
+
+```text
+Scheduled
+Pulled
+Created
+Started
+ScalingReplicaSet
+```
+
+and verify there are no unexplained warning events.
+
+---
+
+## 15.51 Resource Metrics Evidence
+
+Capture:
+
+```bash
+kubectl top pod \
+  --namespace default \
+  -l app=java-maven-app
+
+kubectl top node
+```
+
+Verified historical observation:
+
+```text
+Application Pod
+CPU: 2m
+Memory: 150Mi
+
+Worker Node
+CPU: 43m / 2%
+Memory: 830Mi / 57%
+```
+
+These should be labelled:
+
+```text
+point-in-time monitoring observation
+```
+
+not fixed capacity requirements.
+
+---
+
+## 15.52 Node Evidence
+
+Capture:
+
+```bash
+kubectl get nodes \
+  -o wide
+```
+
+and:
+
+```bash
+kubectl describe node \
+  ip-192-168-60-182.ca-central-1.compute.internal
+```
+
+Important:
+
+```text
+Ready=True
+MemoryPressure=False
+DiskPressure=False
+PIDPressure=False
+```
+
+---
+
+## 15.53 ELB Evidence
+
+Capture:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --output table
+```
+
+Expected:
+
+```text
+InService
+```
+
+Then:
+
+```bash
+aws elb describe-load-balancers \
+  --load-balancer-names a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[0].HealthCheck' \
+  --output table
+```
+
+Expected:
+
+```text
+TCP:30321
+```
+
+---
+
+## 15.54 EKS Logging Evidence
+
+Capture:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --query 'cluster.logging.clusterLogging' \
+  --output json
+```
+
+Record honestly:
+
+```text
+enabled:
+false
+```
+
+for all verified control-plane logging categories.
+
+---
+
+# Monitoring Cost
+
+## 15.55 Current Monitoring Cost
+
+The monitoring used here mainly relies on already-running infrastructure and Kubernetes/AWS API queries.
+
+There is no dedicated Prometheus/Grafana infrastructure cost in this project.
+
+Existing resources still incur their normal charges:
+
+```text
+DigitalOcean Jenkins
+EKS control plane
+EC2 worker
+Classic ELB
+ECR storage
+```
+
+---
+
+## 15.56 Future Monitoring Cost
+
+Additional observability can create extra costs from:
+
+```text
+CloudWatch Logs ingestion
+CloudWatch Logs retention
+Prometheus storage
+Grafana hosting
+extra Kubernetes Pods
+larger nodes
+third-party monitoring subscriptions
+```
+
+Monitoring design should therefore balance:
+
+```text
+visibility
+cost
+retention
+operational value
+```
+
+---
+
+# Monitoring Completion Checklist
+
+## 15.57 Verification Checklist
+
+```text
+[ ] Jenkins final pipeline status reviewed
+
+[ ] Deployment Ready = 1/1
+[ ] Pod Running
+[ ] Pod Ready = true
+[ ] Pod Restarts = 0
+[ ] correct image tag verified
+[ ] image digest verified
+
+[ ] application logs reviewed
+[ ] Java startup successful
+[ ] Spring Boot startup successful
+[ ] Tomcat listening on 8080
+[ ] Java app started message present
+
+[ ] previous-container-log behavior understood
+[ ] recent Kubernetes events reviewed
+[ ] no unexplained Warning events present
+
+[ ] Metrics Server present
+[ ] kubectl top pod succeeds
+[ ] pod CPU/memory observed
+[ ] kubectl top node succeeds
+[ ] node CPU/memory observed
+
+[ ] node Ready
+[ ] MemoryPressure false
+[ ] DiskPressure false
+[ ] PIDPressure false
+
+[ ] Classic ELB backend InService
+[ ] ELB health check TCP:30321 verified
+
+[ ] external HTTP status = 200
+[ ] expected application content returned
+
+[ ] EKS control-plane logging state checked
+[ ] control-plane logging disabled documented
+[ ] no EKS CloudWatch log group documented
+
+[ ] Prometheus/Grafana correctly documented as future improvement
+[ ] resource requests/limits limitation documented
+[ ] health-probe limitation documented
+```
+
+---
+
+## 15.58 Verified Monitoring Snapshot
+
+```text
+Application
+├── Spring Boot: 3.5.5
+├── Java: 17.0.20
+├── Tomcat: port 8080
+├── Pod Ready: true
+├── Restarts: 0
+├── CPU: ~2m
+└── Memory: ~150Mi
+
+EKS Worker
+├── Status: Ready
+├── CPU: ~43m / 2%
+├── Memory: ~830Mi / 57%
+├── MemoryPressure: false
+├── DiskPressure: false
+├── PIDPressure: false
+└── Architecture: amd64
+
+Metrics
+└── Metrics Server present
+
+Classic ELB
+├── backend: InService
+└── health check: TCP:30321
+
+External Application
+├── HTTP: 200
+└── expected content returned
+
+EKS Control Plane Logs
+├── api: disabled
+├── audit: disabled
+├── authenticator: disabled
+├── controllerManager: disabled
+└── scheduler: disabled
+
+Prometheus/Grafana
+└── not implemented in this capstone
+```
+
+---
+
+## 15.59 Phase 15 Final State
+
+```text
+application logs
+✅
+
+Kubernetes events
+✅
+
+Deployment/Pod health
+✅
+
+resource metrics
+✅
+
+Metrics Server
+✅
+
+node health
+✅
+
+ELB health
+✅
+
+external availability
+✅
+
+EKS logging state
+✅
+
+monitoring limitations
+✅
+
+future observability improvements
+✅
+```
+
+**Monitoring is complete.**
 
 ---
 
