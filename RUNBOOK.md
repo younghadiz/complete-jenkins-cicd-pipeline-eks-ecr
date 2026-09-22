@@ -10193,7 +10193,1929 @@ Resources Provisioned
 
 # 11. Security Configuration
 
-To be documented in a later verified documentation batch.
+## 11.1 Objective
+
+Prepare the security controls required before Jenkins is allowed to authenticate to GitHub, Amazon ECR, Amazon EKS, or Kubernetes.
+
+The authoritative project sequence is:
+
+```text
+infrastructure preparation
+→ security configuration
+→ server and cloud provisioning
+→ deployment
+```
+
+This phase therefore establishes:
+
+```text
+Git secret protection
+Jenkins credential storage
+AWS authentication model
+ECR permissions
+EKS authentication requirements
+kubeconfig protection
+Jenkins Git authentication
+pipeline credential scoping
+container/security limitations
+network-access limitations
+```
+
+No secret value should ever be written into the repository.
+
+---
+
+## 11.2 Nana's Security Learning Approach
+
+The original TechWorld with Nana EKS lesson teaches that Jenkins requires four pieces before it can deploy to EKS:
+
+```text
+kubectl
+AWS IAM authentication
+kubeconfig
+AWS credentials
+```
+
+The training sequence was:
+
+```text
+install kubectl
+→ install aws-iam-authenticator
+→ provide kubeconfig
+→ provide AWS credentials
+→ Jenkins can authenticate to EKS
+```
+
+Nana explicitly noted that using a dedicated IAM user for Jenkins with reduced permissions is better practice.
+
+However, for training simplicity, the lesson reused an existing AWS administrative user.
+
+That distinction must remain visible:
+
+```text
+NANA TRAINING IMPLEMENTATION
+Existing AWS user reused for simplicity
+
+NANA BEST-PRACTICE NOTE
+Dedicated Jenkins IAM identity
+with reduced permissions
+
+CURRENT CAPSTONE
+AWS credentials stored in Jenkins as:
+aws_ecr_creds
+
+FUTURE PRODUCTION IMPROVEMENT
+Dedicated least-privilege Jenkins identity
+or short-lived role-based authentication
+```
+
+Do not rewrite the historical lesson to make it appear more advanced than it was.
+
+---
+
+## 11.3 Security Principle — No Secrets in Git
+
+Never commit:
+
+```text
+AWS Access Key ID
+AWS Secret Access Key
+AWS session tokens
+
+GitHub Personal Access Token
+GitLab token
+
+Docker Hub password
+Docker Hub token
+
+Jenkins passwords
+
+private SSH keys
+
+kubeconfig files
+
+.env files containing secrets
+```
+
+Only references such as:
+
+```text
+aws_ecr_creds
+github-token
+dockerhub-creds
+```
+
+belong in source code.
+
+---
+
+## 11.4 Project `.gitignore` Security Controls
+
+The project `.gitignore` contains:
+
+```gitignore
+# ------------------------------------------------------------
+# Environment and local configuration
+# ------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# ------------------------------------------------------------
+# AWS / Kubernetes / Cloud credentials and local state
+# Never commit credentials, kubeconfig files or secrets.
+# ------------------------------------------------------------
+.aws/
+.kube/
+kubeconfig
+kubeconfig.*
+*.pem
+*.key
+*.p12
+*.pfx
+```
+
+These patterns reduce the risk of accidentally tracking local authentication material.
+
+They do not replace careful review before commits.
+
+---
+
+## 11.5 Verify Sensitive Files Are Ignored
+
+Run:
+
+```bash
+git check-ignore -v \
+  .env \
+  .aws/credentials \
+  .kube/config \
+  kubeconfig \
+  example.pem \
+  example.key \
+  2>/dev/null || true
+```
+
+The command should show the matching `.gitignore` rules.
+
+Do not create real secret files just to test this.
+
+Use harmless temporary names or inspect the rules directly.
+
+---
+
+## 11.6 Search for Obvious Secret Patterns
+
+Before important pushes:
+
+```bash
+grep -R \
+  --exclude-dir=.git \
+  --exclude=RUNBOOK.md \
+  -nE \
+  'AWS_SECRET_ACCESS_KEY=|AWS_ACCESS_KEY_ID=|ghp_|github_pat_|BEGIN (RSA|OPENSSH|PRIVATE) KEY' \
+  . \
+  || echo "No obvious secret patterns found."
+```
+
+This is a basic check only.
+
+It does not replace a real secret-scanning tool.
+
+---
+
+## 11.7 Review Staged Files Before Every Security-Sensitive Commit
+
+Always inspect:
+
+```bash
+git status
+
+git diff --cached
+```
+
+Do not automatically use:
+
+```bash
+git add .
+```
+
+when a focused set of security-sensitive files is being committed.
+
+Prefer explicit staging such as:
+
+```bash
+git add Jenkinsfile
+```
+
+or:
+
+```bash
+git add \
+  kubernetes/deployment.yaml \
+  kubernetes/service.yaml
+```
+
+---
+
+# Jenkins Credentials
+
+## 11.8 Jenkins Credential Store
+
+Secrets used by pipelines belong in:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Credentials
+→ System
+→ Global credentials
+```
+
+Source code stores only the credential ID.
+
+Example:
+
+```groovy
+ecrCredentialsId: 'aws_ecr_creds'
+```
+
+Jenkins stores the actual key material.
+
+---
+
+## 11.9 GitHub Credential
+
+Credential ID:
+
+```text
+github-token
+```
+
+Purpose:
+
+```text
+checkout application repository
+push automated pom.xml version update
+```
+
+Nana-aligned representation:
+
+```text
+Kind:
+Username with password
+
+Username:
+<GITHUB_USERNAME>
+
+Password:
+<GITHUB_PERSONAL_ACCESS_TOKEN>
+
+ID:
+github-token
+```
+
+For this project the username is:
+
+```text
+younghadiz
+```
+
+Do not store the PAT in:
+
+```text
+Git
+Jenkinsfile
+RUNBOOK
+README
+shell scripts
+screenshots
+```
+
+---
+
+## 11.10 GitHub Credential Scope
+
+The token should have only the repository access required for:
+
+```text
+read repository
+checkout branches
+push Jenkins-generated version commit
+```
+
+The pipeline does not need unrestricted access to unrelated GitHub repositories.
+
+---
+
+## 11.11 AWS Credential
+
+Credential ID:
+
+```text
+aws_ecr_creds
+```
+
+Current representation:
+
+```text
+Kind:
+Username with password
+
+Username:
+AWS Access Key ID
+
+Password:
+AWS Secret Access Key
+```
+
+The shared library maps these fields to:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
+
+Example:
+
+```groovy
+usernamePassword(
+    credentialsId: ecrCredentialsId,
+    usernameVariable: 'AWS_ACCESS_KEY_ID',
+    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+)
+```
+
+The credential ID is safe to commit.
+
+The actual AWS key values are not.
+
+---
+
+## 11.12 Why the Name `aws_ecr_creds` Became Broader Than ECR
+
+The credential was originally introduced primarily for ECR authentication.
+
+The project later discovered that deployment to EKS also requires an authenticated AWS identity.
+
+Therefore the same Jenkins credential is currently used for:
+
+```text
+Amazon ECR authentication
++
+EKS authentication during kubectl execution
+```
+
+The name:
+
+```text
+aws_ecr_creds
+```
+
+is therefore slightly narrower than its final role.
+
+This is acceptable for the training implementation.
+
+A future cleanup could rename it to something such as:
+
+```text
+aws-jenkins-creds
+```
+
+but that would require updating Jenkins and all pipeline references together.
+
+Do not rename it only for documentation appearance.
+
+---
+
+# Amazon ECR Permissions
+
+## 11.13 ECR Authentication Method
+
+The shared library performs:
+
+```bash
+aws ecr get-login-password \
+  --region "$AWS_REGION_VALUE" |
+  docker login \
+    --username AWS \
+    --password-stdin "$ECR_REGISTRY_SERVER_VALUE"
+```
+
+The generated ECR authorization token is temporary.
+
+Do not store a previously generated ECR login token.
+
+Generate a new one during each pipeline execution.
+
+---
+
+## 11.14 ECR IAM Actions Identified by the Project
+
+The shared-library documentation identifies permissions such as:
+
+```text
+ecr:GetAuthorizationToken
+ecr:BatchCheckLayerAvailability
+ecr:CompleteLayerUpload
+ecr:UploadLayerPart
+ecr:InitiateLayerUpload
+ecr:PutImage
+ecr:BatchGetImage
+```
+
+These support the ECR authentication and image-push workflow used by the pipeline.
+
+Exact production permissions should be reviewed against the final pipeline behavior and AWS resource scope.
+
+---
+
+## 11.15 ECR Least-Privilege Direction
+
+A future dedicated Jenkins AWS policy should restrict repository-specific operations where AWS supports resource scoping.
+
+Conceptually:
+
+```text
+authorization-token access
+        ↓
+specific ECR repository
+        ↓
+upload layers
+        ↓
+put image
+```
+
+Do not grant:
+
+```text
+AdministratorAccess
+```
+
+merely because ECR authentication failed.
+
+---
+
+# Amazon EKS Authentication
+
+## 11.16 EKS Authentication Components
+
+Nana's EKS-from-Jenkins training explicitly requires:
+
+```text
+kubectl
+aws-iam-authenticator
+kubeconfig
+AWS credentials
+```
+
+The reasoning is:
+
+```text
+kubectl
+→ reads kubeconfig
+
+kubeconfig
+→ identifies EKS endpoint and authentication method
+
+AWS authentication
+→ generates a Kubernetes authentication token
+
+EKS
+→ validates AWS identity
+
+Kubernetes
+→ authorizes that identity
+```
+
+---
+
+## 11.17 Original Nana Tooling
+
+Inside the Jenkins container, the training installed:
+
+```bash
+curl -LO \
+  https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+
+chmod +x ./kubectl
+
+mv ./kubectl \
+  /usr/local/bin/kubectl
+```
+
+Verify:
+
+```bash
+kubectl version --client
+```
+
+The lesson then installed AWS IAM Authenticator:
+
+```bash
+curl -Lo aws-iam-authenticator \
+  https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.11/aws-iam-authenticator_0.6.11_linux_amd64
+
+chmod +x ./aws-iam-authenticator
+
+mv ./aws-iam-authenticator \
+  /usr/local/bin
+```
+
+This is the recovered Nana training method.
+
+---
+
+## 11.18 Historical AWS IAM Authenticator Note
+
+The training also contained a later generic/latest-release-style command:
+
+```bash
+curl -Lo aws-iam-authenticator \
+  https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/latest/download/aws-iam-authenticator_$(uname -s)_amd64
+```
+
+The precise download URL can change across releases.
+
+When rebuilding, verify the current official installation instructions instead of assuming an old release URL is still valid.
+
+The learning objective remains:
+
+```text
+Jenkins must have the EKS authentication tool
+required by its kubeconfig
+```
+
+---
+
+# Kubeconfig Security
+
+## 11.19 Why Jenkins Needs Its Own Kubeconfig
+
+The local developer machine having:
+
+```text
+~/.kube/config
+```
+
+does not automatically make that configuration available to Jenkins.
+
+Jenkins runs in a separate environment.
+
+The Nana workflow therefore created a kubeconfig for Jenkins itself.
+
+---
+
+## 11.20 Nana's Kubeconfig Workflow
+
+Training sequence:
+
+```text
+create config on DigitalOcean host
+→ create ~/.kube inside Jenkins container
+→ docker cp config into Jenkins home
+→ verify file inside Jenkins
+```
+
+Inside Jenkins:
+
+```bash
+mkdir ~/.kube
+```
+
+Safer reusable form:
+
+```bash
+mkdir -p ~/.kube
+```
+
+Then from the DigitalOcean host:
+
+```bash
+docker cp \
+  config \
+  <container-id>:/var/jenkins_home/.kube/config
+```
+
+The historical lesson placed the file at:
+
+```text
+/var/jenkins_home/.kube/config
+```
+
+---
+
+## 11.21 Kubeconfig Content
+
+The training explained that the file contains information including:
+
+```text
+EKS API server endpoint
+certificate-authority data
+cluster identification
+AWS authentication exec configuration
+```
+
+Do not publish the complete operational kubeconfig in Git.
+
+Even when some contents are not passwords, it is authentication configuration and should remain outside the repository.
+
+---
+
+## 11.22 Kubeconfig Permissions
+
+After placing a kubeconfig on a Linux Jenkins system, use restrictive filesystem permissions where possible:
+
+```bash
+chmod 600 \
+  /var/jenkins_home/.kube/config
+```
+
+Directory:
+
+```bash
+chmod 700 \
+  /var/jenkins_home/.kube
+```
+
+The exact ownership must allow the Jenkins process to read the file.
+
+Do not solve a permission problem by making kubeconfig world-readable.
+
+---
+
+## 11.23 Do Not Commit Kubeconfig
+
+The application `.gitignore` protects:
+
+```text
+.kube/
+kubeconfig
+kubeconfig.*
+```
+
+The Jenkins server copy belongs outside the source repository.
+
+---
+
+# AWS Identity Design
+
+## 11.24 Nana's Original Identity Choice
+
+The training explicitly states that for simplicity the existing AWS admin-style user was reused.
+
+That does not mean administrative access is required.
+
+The lesson itself explains that a better solution is:
+
+```text
+dedicated Jenkins IAM user
++
+more limited permissions
+```
+
+---
+
+## 11.25 Current Capstone Security Position
+
+The capstone successfully used the Jenkins credential:
+
+```text
+aws_ecr_creds
+```
+
+for AWS CLI operations.
+
+The precise historical IAM policy attached to the AWS principal behind those keys has not been recovered as an authoritative capstone artifact.
+
+Therefore the runbook must not claim:
+
+```text
+Jenkins used policy X
+```
+
+unless that policy is directly verified.
+
+What is verified is:
+
+```text
+AWS credential existed in Jenkins
+ECR authentication succeeded
+ECR image push succeeded
+EKS authentication succeeded after credential scope was corrected
+```
+
+---
+
+## 11.26 Reusable Production Direction
+
+A stronger implementation would create a dedicated Jenkins AWS principal or role that has only the capabilities required to:
+
+```text
+authenticate to ECR
+push images to java-maven-app
+
+obtain EKS authentication
+access java-maven-eks
+
+perform the Kubernetes operations
+authorized for the deployment
+```
+
+AWS IAM authentication alone is not the complete Kubernetes authorization model.
+
+The AWS principal must also be recognized by the EKS/Kubernetes access configuration.
+
+---
+
+## 11.27 EKS AWS Authentication vs Kubernetes Authorization
+
+These are separate layers:
+
+```text
+AWS authentication
+        ↓
+Who is this AWS principal?
+
+EKS/Kubernetes authorization
+        ↓
+What is this principal allowed to do?
+```
+
+Successful AWS credentials do not automatically mean:
+
+```text
+kubectl apply
+```
+
+is authorized.
+
+The identity must have appropriate cluster access.
+
+---
+
+## 11.28 Verify AWS Identity from Jenkins
+
+When troubleshooting AWS access inside Jenkins, run only inside a credential-bound block.
+
+Example conceptual test:
+
+```bash
+aws sts get-caller-identity
+```
+
+This confirms which AWS principal Jenkins is using.
+
+Do not echo:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
+
+to prove that credentials exist.
+
+Identity verification is safer than credential-value printing.
+
+---
+
+## 11.29 Verify Kubernetes Authorization
+
+Once Jenkins has valid kubeconfig and AWS authentication:
+
+```bash
+kubectl auth can-i get deployments \
+  --namespace default
+```
+
+For this pipeline, useful permissions include the Kubernetes actions needed by:
+
+```text
+kubectl apply
+kubectl rollout status
+```
+
+on the project Deployment and Service.
+
+Do not grant cluster-admin automatically just because a narrower authorization fails.
+
+---
+
+# EKS API Endpoint Security
+
+## 11.30 Verified Current Cluster Endpoint
+
+The final capstone cluster was verified with:
+
+```text
+EndpointPublicAccess:
+true
+
+EndpointPrivateAccess:
+false
+
+PublicAccessCidrs:
+0.0.0.0/0
+```
+
+This means the EKS API endpoint is publicly reachable from any IPv4 address at the network layer.
+
+Authentication is still required, but the network exposure is broad.
+
+---
+
+## 11.31 Current vs Production Security Position
+
+For the learning environment:
+
+```text
+public endpoint:
+enabled
+
+public CIDR:
+0.0.0.0/0
+```
+
+keeps Jenkins connectivity simple.
+
+For a stronger production environment consider:
+
+```text
+restrict public endpoint CIDRs
+```
+
+for example to trusted administrative/Jenkins egress addresses, or:
+
+```text
+enable private endpoint access
+```
+
+with appropriate private connectivity.
+
+Do not silently change the live capstone endpoint configuration during documentation.
+
+---
+
+## 11.32 Why Public Endpoint Access Was Useful Here
+
+Jenkins is hosted outside AWS on DigitalOcean.
+
+A publicly reachable EKS API makes it possible for:
+
+```text
+DigitalOcean Jenkins
+        ↓
+Internet
+        ↓
+EKS public API endpoint
+```
+
+to communicate without a site-to-site VPN or private network integration.
+
+That simplicity matches the learning objective.
+
+---
+
+## 11.33 Future Network Security Improvement
+
+A stronger architecture could use one of:
+
+```text
+restricted EKS public CIDR
+VPN
+private connectivity
+AWS-hosted Jenkins
+private EKS API endpoint
+```
+
+Each adds infrastructure and operational complexity.
+
+They are future improvements, not hidden requirements of this capstone.
+
+---
+
+# Jenkins Credential Scope
+
+## 11.34 Keep Credentials Around Only When Needed
+
+Jenkins Credentials Binding should wrap only the stages that need the secret.
+
+Good pattern:
+
+```groovy
+withCredentials([
+    usernamePassword(
+        credentialsId: ecrCredentialsId,
+        usernameVariable: 'AWS_ACCESS_KEY_ID',
+        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+    )
+]) {
+    // AWS operation
+}
+```
+
+Outside that block the pipeline should not depend on those credential variables.
+
+---
+
+## 11.35 Initial ECR Credential Scope
+
+The ECR stage already used credentials correctly:
+
+```text
+Push Docker Image
+        ↓
+withCredentials
+        ↓
+aws ecr get-login-password
+        ↓
+docker push
+```
+
+After the stage finished, those environment variables were no longer in scope.
+
+That became important during deployment.
+
+---
+
+# Confirmed Security/Authentication Troubleshooting
+
+## 11.36 Deployment Authentication Failure
+
+The first EKS deployment design called:
+
+```groovy
+deployToEks(...)
+```
+
+without wrapping the Deploy stage in AWS credentials.
+
+However, Jenkins kubeconfig authentication required AWS credentials at deployment time.
+
+Conceptually:
+
+```text
+Push Docker Image stage
+        │
+        ├── AWS credentials available
+        │
+        └── stage ends
+                ↓
+AWS credential scope ends
+
+Deploy stage
+        ↓
+kubectl
+        ↓
+kubeconfig authentication
+        ↓
+AWS token generation
+        ↓
+AWS credentials required
+```
+
+Therefore ECR authentication succeeding did not prove that the later EKS deployment had AWS credentials.
+
+---
+
+## 11.37 Root Cause
+
+The AWS credential binding existed only around:
+
+```text
+ECR push
+```
+
+and not around:
+
+```text
+kubectl deployment
+```
+
+The kubeconfig authentication process required AWS identity at the exact time `kubectl` connected to EKS.
+
+This was a credential-scope problem rather than:
+
+```text
+bad Kubernetes YAML
+bad Docker image
+bad Service selector
+```
+
+---
+
+## 11.38 Fix Branch
+
+Shared-library fix branch:
+
+```text
+fix/eks-deployment-aws-credentials
+```
+
+Verified commit:
+
+```text
+9aae486
+fix: provide AWS credentials during EKS deployment
+```
+
+The fix was later merged to `master` as:
+
+```text
+5bcdcbd
+merge: fix EKS deployment AWS credentials
+```
+
+---
+
+## 11.39 Confirmed Deploy-Stage Fix
+
+The Deploy stage was changed from:
+
+```groovy
+stage('Deploy') {
+    steps {
+        script {
+            deployToEks(
+                appDir,
+                manifestDir,
+                appName,
+                imageName,
+                env.IMAGE_TAG,
+                namespace
+            )
+        }
+    }
+}
+```
+
+to:
+
+```groovy
+stage('Deploy') {
+    steps {
+        script {
+            withCredentials([
+                usernamePassword(
+                    credentialsId: ecrCredentialsId,
+                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                withEnv([
+                    "AWS_DEFAULT_REGION=${awsRegion}",
+                    "AWS_REGION=${awsRegion}"
+                ]) {
+                    deployToEks(
+                        appDir,
+                        manifestDir,
+                        appName,
+                        imageName,
+                        env.IMAGE_TAG,
+                        namespace
+                    )
+                }
+            }
+        }
+    }
+}
+```
+
+This made AWS credentials available only while EKS deployment required them.
+
+---
+
+## 11.40 Why the Fix Belongs in the Pipeline Layer
+
+`KubernetesUtils.groovy` remains responsible for:
+
+```text
+envsubst
+kubectl apply
+kubectl rollout status
+```
+
+The pipeline layer provides:
+
+```text
+AWS credentials
+AWS region
+pipeline execution context
+```
+
+Architecture:
+
+```text
+singleServicePipeline
+        │
+        ├── AWS credentials
+        ├── AWS region
+        │
+        ▼
+deployToEks
+        │
+        ▼
+KubernetesUtils
+        │
+        ▼
+kubectl
+        │
+        ▼
+EKS authentication
+```
+
+This keeps credential ownership out of the lower-level Kubernetes utility.
+
+---
+
+## 11.41 Fix Verification Strategy
+
+The shared-library fix was not merged blindly.
+
+A temporary application branch was created:
+
+```text
+bugfix/verify-eks-deployment-credentials
+```
+
+and the Jenkinsfile temporarily loaded:
+
+```text
+jenkins-shared-library@fix/eks-deployment-aws-credentials
+```
+
+Jenkins successfully resolved shared-library commit:
+
+```text
+9aae486
+```
+
+and tested it before the fix was merged.
+
+This is a strong reusable troubleshooting pattern:
+
+```text
+library fix branch
+        +
+consumer test branch
+        ↓
+integration verification
+        ↓
+merge library fix
+```
+
+---
+
+## 11.42 Temporary Verification Commit History
+
+Application verification branch included:
+
+```text
+1f772e5
+test: verify EKS deployment credentials fix
+
+2fbd4ef
+ci: version bump
+
+48a5467
+ci: restore shared library default version
+```
+
+The temporary branch is not intended to be merged into `develop`.
+
+It exists as verification history until cleanup.
+
+---
+
+# Git Commit Security
+
+## 11.43 Jenkins Commit Identity
+
+Automated version commit:
+
+```text
+jenkins <jenkins@example.com>
+```
+
+Commit message:
+
+```text
+ci: version bump
+```
+
+This predictable identity allows:
+
+```text
+Ignore Committer Strategy
+```
+
+to suppress recursive builds.
+
+---
+
+## 11.44 Stage Only `pom.xml`
+
+The commit helper deliberately performs:
+
+```bash
+git add pom.xml
+```
+
+not:
+
+```bash
+git add .
+```
+
+This reduces the risk that:
+
+```text
+generated files
+logs
+temporary files
+rendered manifests
+credentials
+```
+
+accidentally enter the automated version commit.
+
+---
+
+## 11.45 Git Authentication Without Credential in Remote URL
+
+The final helper uses temporary:
+
+```text
+GIT_ASKPASS
+```
+
+rather than permanently rewriting the Git remote to:
+
+```text
+https://username:password@github.com/...
+```
+
+This reduces accidental credential exposure.
+
+Temporary helper cleanup:
+
+```bash
+trap 'rm -f "$GIT_ASKPASS"' EXIT
+```
+
+---
+
+# Docker Security
+
+## 11.46 Dockerfile Contains No Secrets
+
+Verified Dockerfile:
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY target/java-maven-app-*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+No:
+
+```text
+AWS credential
+Git token
+password
+private key
+```
+
+is baked into the image.
+
+---
+
+## 11.47 Known Container Security Limitation
+
+The Dockerfile does not specify:
+
+```dockerfile
+USER
+```
+
+so the application uses the base image's default user.
+
+This is a known basic-training limitation.
+
+Future improvement:
+
+```text
+create non-root user
+→ assign required permissions
+→ run Java as non-root
+```
+
+Do not silently rewrite the historical Dockerfile during documentation.
+
+---
+
+# Kubernetes Manifest Security
+
+## 11.48 No Secret Values in Deployment Manifest
+
+Current deployment manifest contains:
+
+```text
+APP_NAME
+IMAGE_NAME
+IMAGE_TAG
+```
+
+only.
+
+No AWS or Git credentials are injected into Kubernetes YAML.
+
+This application itself does not require database/application secrets.
+
+Therefore a Kubernetes Secret object is not required for the current application.
+
+---
+
+## 11.49 `envsubst` Security Consideration
+
+The deployment process uses:
+
+```bash
+envsubst
+```
+
+to substitute:
+
+```text
+APP_NAME
+IMAGE_NAME
+IMAGE_TAG
+```
+
+These are non-secret deployment metadata.
+
+Do not later extend the same pattern to render plaintext passwords into committed or logged YAML without considering secret handling.
+
+---
+
+# Jenkins Logging Security
+
+## 11.50 Jenkins Masks Bound Credentials
+
+Jenkins Credentials Binding masks known secret values in pipeline output.
+
+However:
+
+```text
+masking
+```
+
+is not permission to intentionally echo credentials.
+
+Never run:
+
+```bash
+echo "$AWS_SECRET_ACCESS_KEY"
+```
+
+or:
+
+```bash
+env
+```
+
+inside a credential-bearing stage when it would print sensitive values.
+
+---
+
+## 11.51 Avoid Shell Tracing Around Secrets
+
+Avoid:
+
+```bash
+set -x
+```
+
+inside shell blocks where credentials may appear in commands.
+
+The shared-library AWS shell blocks use:
+
+```bash
+set -e
+```
+
+rather than enabling command tracing intentionally.
+
+---
+
+# Credential Rotation
+
+## 11.52 Long-Lived Access Key Limitation
+
+The Nana-style implementation uses:
+
+```text
+AWS Access Key ID
+AWS Secret Access Key
+```
+
+stored in Jenkins.
+
+This is understandable for training but represents long-lived credentials.
+
+Future production improvement:
+
+```text
+short-lived credentials
+IAM role assumption
+OIDC / workload identity
+AWS-hosted role-based Jenkins access
+```
+
+depending on the Jenkins hosting architecture.
+
+---
+
+## 11.53 GitHub PAT Limitation
+
+Similarly:
+
+```text
+github-token
+```
+
+uses a long-lived GitHub credential.
+
+Future improvement:
+
+```text
+fine-grained PAT
+GitHub App
+shorter expiry
+repository-specific permissions
+regular rotation
+```
+
+---
+
+# Security Verification
+
+## 11.54 Repository Security Check
+
+Application repository:
+
+```bash
+git status
+
+git ls-files
+
+git check-ignore -v .env 2>/dev/null || true
+git check-ignore -v .kube/config 2>/dev/null || true
+git check-ignore -v kubeconfig 2>/dev/null || true
+```
+
+Verify no sensitive files appear in:
+
+```bash
+git ls-files
+```
+
+---
+
+## 11.55 Inspect Application Pipeline References
+
+Run:
+
+```bash
+grep -nE \
+  'CredentialsId|credentialsId|github-token|aws_ecr_creds' \
+  Jenkinsfile
+```
+
+Expected:
+
+```text
+credential IDs only
+```
+
+No credential values.
+
+---
+
+## 11.56 Inspect Shared Library Security References
+
+In:
+
+```text
+/Users/younghadiz/Documents/tech-workspace/jenkins-shared-library
+```
+
+run:
+
+```bash
+grep -R \
+  --exclude-dir=.git \
+  -nE \
+  'withCredentials|usernamePassword|AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|GIT_ASKPASS' \
+  vars src
+```
+
+Review that credential variables appear only inside intended credential-handling logic.
+
+---
+
+## 11.57 Verify Current EKS Endpoint Security
+
+After cluster provisioning:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --query 'cluster.resourcesVpcConfig.{
+    Public:endpointPublicAccess,
+    Private:endpointPrivateAccess,
+    CIDRs:publicAccessCidrs
+  }' \
+  --output yaml
+```
+
+Verified historical result:
+
+```text
+Public: true
+Private: false
+CIDRs:
+- 0.0.0.0/0
+```
+
+Record this honestly as a known security limitation.
+
+---
+
+## 11.58 Verify AWS Identity Without Printing Keys
+
+From an authenticated environment:
+
+```bash
+aws sts get-caller-identity
+```
+
+Inside Jenkins this command should only be executed while the AWS credential binding is active.
+
+Do not print credential variables.
+
+---
+
+## 11.59 Verify EKS Authorization
+
+Once cluster access is configured:
+
+```bash
+kubectl auth can-i get deployments \
+  --namespace default
+```
+
+Additional useful checks:
+
+```bash
+kubectl auth can-i create deployments \
+  --namespace default
+
+kubectl auth can-i patch deployments \
+  --namespace default
+
+kubectl auth can-i create services \
+  --namespace default
+
+kubectl auth can-i patch services \
+  --namespace default
+```
+
+The exact permissions should match the operations performed by the deployment pipeline.
+
+---
+
+## 11.60 Security Troubleshooting — ECR Authentication Fails
+
+Verify:
+
+```text
+AWS credential exists
+credential ID matches
+AWS identity valid
+AWS region correct
+ECR permissions present
+repository exists
+AWS CLI available
+Docker available
+```
+
+Test identity:
+
+```bash
+aws sts get-caller-identity
+```
+
+Do not troubleshoot by embedding keys directly into the Jenkinsfile.
+
+---
+
+## 11.61 Security Troubleshooting — EKS Authentication Fails
+
+Check separately:
+
+```text
+kubectl available
+authentication tool available
+kubeconfig exists
+kubeconfig readable by Jenkins
+AWS credentials available during Deploy stage
+AWS region available
+AWS identity recognized by EKS
+Kubernetes authorization sufficient
+EKS endpoint reachable
+```
+
+This project specifically encountered:
+
+```text
+AWS credentials unavailable during Deploy stage
+```
+
+and confirmed the credential-scope fix described earlier.
+
+---
+
+## 11.62 Security Troubleshooting — Kubeconfig Permission Denied
+
+Check:
+
+```bash
+ls -ld \
+  /var/jenkins_home/.kube
+
+ls -l \
+  /var/jenkins_home/.kube/config
+```
+
+Recommended:
+
+```text
+directory:
+700
+
+config:
+600
+```
+
+with ownership readable by the Jenkins process.
+
+Do not use:
+
+```bash
+chmod 777
+```
+
+as the permanent solution.
+
+---
+
+## 11.63 Security Troubleshooting — Jenkins Cannot Reach EKS
+
+Authentication errors and network errors are different.
+
+Authentication-style problem:
+
+```text
+Unauthorized
+credentials missing
+token-generation problem
+```
+
+Network-style problem:
+
+```text
+connection timeout
+DNS failure
+TCP connection failure
+```
+
+Do not change IAM permissions to solve a network timeout.
+
+Do not widen firewall/CIDR access to solve a credential error.
+
+Identify which layer failed first.
+
+---
+
+## 11.64 Security Evidence to Capture
+
+Capture:
+
+```text
+Jenkins credential IDs
+without values
+
+github-token entry
+without token
+
+aws_ecr_creds entry
+without AWS keys
+
+.gitignore secret protections
+
+Ignore Committer Strategy configuration
+
+Jenkins Git identity:
+jenkins@example.com
+
+AWS sts get-caller-identity
+with identifiers reviewed/redacted as desired
+
+EKS endpoint configuration
+
+kubectl auth can-i results
+
+shared-library fix history:
+9aae486
+5bcdcbd
+```
+
+Never capture:
+
+```text
+AWS Secret Access Key
+GitHub PAT
+passwords
+full private keys
+session tokens
+```
+
+---
+
+## 11.65 Security Cost Impact
+
+Security preparation itself adds no AWS infrastructure charge.
+
+Possible future security features may add cost, including:
+
+```text
+VPN
+private network connectivity
+NAT Gateway
+customer-managed KMS key
+advanced security/monitoring services
+```
+
+They are not required in the basic capstone.
+
+---
+
+## 11.66 Current Security Controls
+
+Verified or implemented:
+
+```text
+✅ secrets excluded from Git
+✅ Jenkins Credentials used
+✅ GitHub token referenced by ID
+✅ AWS credentials referenced by ID
+✅ ECR authentication generated at runtime
+✅ AWS secret key not committed
+✅ kubeconfig outside repository
+✅ only pom.xml staged by Jenkins
+✅ temporary GIT_ASKPASS used
+✅ Jenkins-generated commits identifiable
+✅ Ignore Committer Strategy used
+✅ ECR scan-on-push enabled
+✅ ECR AES256 encryption
+✅ AWS credentials scoped to Deploy after fix
+```
+
+---
+
+## 11.67 Known Security Limitations
+
+Intentionally simple / future improvements:
+
+```text
+🟡 long-lived AWS access keys
+🟡 credential name aws_ecr_creds now serves ECR + EKS
+🟡 exact Jenkins IAM policy not captured as a dedicated least-privilege policy
+🟡 EKS public API endpoint enabled
+🟡 EKS public access CIDR is 0.0.0.0/0
+🟡 container does not explicitly run as non-root
+🟡 shared library default version uses master
+🟡 no dedicated automated secret scanner
+🟡 no Jenkins Shared Library unit test framework
+```
+
+These limitations must be documented rather than hidden.
+
+---
+
+## 11.68 Future Production Security Improvements
+
+Possible later improvements:
+
+```text
+dedicated Jenkins IAM role/user
+least-privilege ECR policy
+least-privilege EKS access
+short-lived AWS credentials
+restricted EKS API CIDR
+private EKS endpoint where appropriate
+HTTPS Jenkins endpoint
+fine-grained GitHub authentication
+credential rotation
+non-root application container
+Trivy or equivalent scanning
+automated secret scanner
+versioned Jenkins Shared Library releases
+```
+
+Add only improvements justified by the target environment.
+
+---
+
+## 11.69 Phase 11 Completion Checklist
+
+```text
+[ ] .gitignore protects local secret material
+[ ] no secrets tracked in Git
+[ ] github-token stored only in Jenkins
+[ ] aws_ecr_creds stored only in Jenkins
+[ ] AWS key values absent from repositories
+[ ] ECR required actions understood
+[ ] ECR runtime authentication understood
+[ ] Jenkins EKS authentication requirements documented
+[ ] kubectl requirement documented
+[ ] aws-iam-authenticator training method documented
+[ ] kubeconfig location documented
+[ ] kubeconfig excluded from Git
+[ ] kubeconfig permissions planned
+[ ] AWS identity approach documented
+[ ] Nana admin-user simplification documented
+[ ] dedicated Jenkins IAM identity documented as improvement
+[ ] AWS authentication vs Kubernetes authorization distinguished
+[ ] EKS endpoint exposure documented
+[ ] current 0.0.0.0/0 CIDR limitation documented
+[ ] Jenkins credential scope reviewed
+[ ] confirmed EKS deployment credential failure documented
+[ ] root cause documented
+[ ] fix commit 9aae486 documented
+[ ] merge commit 5bcdcbd documented
+[ ] integration verification branch documented
+[ ] Ignore Committer Strategy security purpose documented
+[ ] no chargeable security infrastructure created unnecessarily
+```
+
+---
+
+## 11.70 Phase 11 Final State
+
+Security Configuration is ready for the basic Nana-aligned infrastructure:
+
+```text
+Git secret protection
+        ✅
+
+Jenkins Git credentials
+        ✅
+
+Jenkins AWS credential reference
+        ✅
+
+ECR permissions identified
+        ✅
+
+EKS authentication model understood
+        ✅
+
+kubeconfig protection
+        ✅
+
+credential scope corrected
+        ✅
+
+recursive commit protection
+        ✅
+
+security limitations documented
+        ✅
+
+production improvements separated
+        ✅
+```
+
+The project can now move to actual server and cloud resource creation.
 
 ---
 
