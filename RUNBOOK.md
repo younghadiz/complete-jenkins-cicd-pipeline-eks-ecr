@@ -15911,7 +15911,2110 @@ cost warning
 
 # 13. Deployment
 
-To be documented in a later verified documentation batch.
+## 13.1 Objective
+
+Execute the complete Jenkins CI/CD workflow against the provisioned Amazon ECR and Amazon EKS infrastructure.
+
+At this point the project has already completed:
+
+```text
+requirements
+→ repository setup
+→ local environment
+→ application build
+→ automated tests
+→ artifact creation
+→ containerization
+→ local container testing
+→ pipeline preparation
+→ infrastructure preparation
+→ security configuration
+→ server and cloud provisioning
+```
+
+Deployment now performs:
+
+```text
+GitHub source
+        ↓
+Jenkins Multibranch Pipeline
+        ↓
+Jenkins Shared Library
+        ↓
+increment Maven version
+        ↓
+run Maven build and automated test
+        ↓
+create executable JAR
+        ↓
+build versioned Docker image
+        ↓
+authenticate to Amazon ECR
+        ↓
+push image
+        ↓
+authenticate to Amazon EKS
+        ↓
+render Kubernetes manifests
+        ↓
+apply Deployment
+        ↓
+apply Service
+        ↓
+wait for rollout
+        ↓
+commit new Maven version
+        ↓
+push version commit to GitHub
+```
+
+This phase records both:
+
+```text
+initial failed deployment
+→ root cause
+→ confirmed fix
+→ successful deployment
+```
+
+Do not erase the failure from the runbook.
+
+It demonstrates real troubleshooting.
+
+---
+
+## 13.2 Deployment Starting Point
+
+Verified application repository state before the successful deployment:
+
+```text
+branch:
+develop
+
+commit:
+e217b83
+
+message:
+merge: configure AWS ECR deployment
+```
+
+The final AWS configuration had already been merged into `develop`.
+
+Jenkins therefore checked out:
+
+```text
+e217b83
+```
+
+before executing the successful pipeline.
+
+---
+
+## 13.3 Application Jenkinsfile
+
+The final application `Jenkinsfile` is:
+
+```groovy
+@Library('jenkins-shared-library') _
+
+singleServicePipeline(
+    appName: 'java-maven-app',
+
+    appDir: '.',
+
+    manifestDir: 'kubernetes',
+
+    registryType: 'ecr',
+
+    imageName: '002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app',
+
+    awsRegion: 'ca-central-1',
+
+    ecrRegistryServer: '002184382122.dkr.ecr.ca-central-1.amazonaws.com',
+
+    ecrCredentialsId: 'aws_ecr_creds',
+
+    gitCredentialsId: 'github-token',
+
+    repositoryUrl: 'https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git',
+
+    namespace: 'default'
+)
+```
+
+Reusable values:
+
+```text
+<AWS_ACCOUNT_ID>
+<AWS_REGION>
+<ECR_REPOSITORY>
+<GITHUB_REPOSITORY>
+```
+
+must replace project-specific identifiers in another environment.
+
+Never put actual AWS keys or GitHub tokens in this file.
+
+---
+
+# Deployment Pipeline
+
+## 13.4 Jenkins Pipeline Stages
+
+The final shared pipeline executes:
+
+```text
+Increment Version
+        ↓
+Build Application
+        ↓
+Build Docker Image
+        ↓
+Push Docker Image
+        ↓
+Deploy
+        ↓
+Commit Version Update
+```
+
+Declarative Jenkins also adds internal stages such as:
+
+```text
+Checkout SCM
+Tool Install
+Post Actions
+```
+
+These are normal Jenkins framework stages.
+
+---
+
+# Stage 1 — Increment Version
+
+## 13.5 Starting Maven Version
+
+Before the successful run:
+
+```text
+1.1.0-SNAPSHOT
+```
+
+Jenkins runs:
+
+```bash
+mvn build-helper:parse-version versions:set \
+  '-DnewVersion=${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.nextIncrementalVersion}' \
+  versions:commit
+```
+
+The verified pipeline processed:
+
+```text
+1.1.0-SNAPSHOT
+→ 1.1.1
+```
+
+Result:
+
+```text
+Application version:
+1.1.1
+```
+
+---
+
+## 13.6 Jenkins Image Tag
+
+The pipeline then combines:
+
+```text
+application version
++
+Jenkins BUILD_NUMBER
+```
+
+as:
+
+```groovy
+env.IMAGE_TAG = "${version}-${env.BUILD_NUMBER}"
+```
+
+For the successful run:
+
+```text
+APP_VERSION:
+1.1.1
+
+BUILD_NUMBER:
+2
+
+IMAGE_TAG:
+1.1.1-2
+```
+
+Therefore the complete deployment image became:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+This gives each Jenkins build a unique image tag.
+
+---
+
+# Stage 2 — Build Application
+
+## 13.7 Maven Build Command
+
+Jenkins runs:
+
+```bash
+mvn clean package
+```
+
+This performs:
+
+```text
+clean
+→ compile
+→ compile tests
+→ run tests
+→ package JAR
+→ Spring Boot repackage
+```
+
+---
+
+## 13.8 Automated Test Result
+
+Verified Jenkins test:
+
+```text
+ApplicationTest
+
+Tests run:
+1
+
+Failures:
+0
+
+Errors:
+0
+
+Skipped:
+0
+```
+
+The pipeline must stop if tests fail.
+
+Do not use:
+
+```bash
+-DskipTests
+```
+
+to force deployment after a failing test.
+
+---
+
+## 13.9 Jenkins Artifact
+
+Verified output:
+
+```text
+target/java-maven-app-1.1.1.jar
+```
+
+The Spring Boot Maven plugin also created:
+
+```text
+target/java-maven-app-1.1.1.jar.original
+```
+
+The main artifact was repackaged as an executable Spring Boot JAR.
+
+Verified result:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+## 13.10 Maven Encoding Warning
+
+The successful Jenkins build still produced warnings similar to:
+
+```text
+File encoding has not been set
+Using platform encoding UTF-8
+```
+
+This warning did not block the deployment.
+
+Record it as:
+
+```text
+non-blocking
+```
+
+Future improvement:
+
+explicitly configure Maven source encoding.
+
+---
+
+# Stage 3 — Build Docker Image
+
+## 13.11 Image Built by Jenkins
+
+Jenkins executes:
+
+```bash
+docker build \
+  -t 002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2 \
+  .
+```
+
+The Dockerfile is:
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY target/java-maven-app-*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+---
+
+## 13.12 Jenkins Build Architecture
+
+This image is built by Jenkins on the DigitalOcean Linux environment.
+
+That is important because the target EKS worker is:
+
+```text
+amd64 / x86_64
+```
+
+while the locally tested Mac image was:
+
+```text
+arm64
+```
+
+Therefore the EKS deployment uses the Jenkins-built image, not the local Mac validation image.
+
+---
+
+## 13.13 Verified Docker Build
+
+Docker successfully:
+
+```text
+loaded Dockerfile
+loaded .dockerignore
+resolved eclipse-temurin:17-jre
+copied the 1.1.1 JAR
+created /app/app.jar
+exported image
+tagged image
+```
+
+as:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+---
+
+# Stage 4 — Push Docker Image to ECR
+
+## 13.14 AWS Credentials
+
+The shared library enters:
+
+```groovy
+withCredentials([
+    usernamePassword(
+        credentialsId: ecrCredentialsId,
+        usernameVariable: 'AWS_ACCESS_KEY_ID',
+        passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+    )
+])
+```
+
+Jenkins masks known secret values in the console.
+
+---
+
+## 13.15 ECR Login
+
+The pipeline runs:
+
+```bash
+aws ecr get-login-password \
+  --region ca-central-1 \
+  | docker login \
+      --username AWS \
+      --password-stdin \
+      002184382122.dkr.ecr.ca-central-1.amazonaws.com
+```
+
+Verified:
+
+```text
+Login Succeeded
+```
+
+---
+
+## 13.16 Docker Credential Warning
+
+The successful pipeline also displayed:
+
+```text
+WARNING!
+Your credentials are stored unencrypted in
+/var/jenkins_home/.docker/config.json
+```
+
+This did not fail the build.
+
+Record:
+
+```text
+non-blocking warning
+```
+
+Future improvement:
+
+```text
+Docker credential helper
+or temporary Docker config directory
+```
+
+Do not confuse this warning with failed ECR authentication.
+
+---
+
+## 13.17 Push Image
+
+Jenkins runs:
+
+```bash
+docker push \
+  002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+Verified pushed tag:
+
+```text
+1.1.1-2
+```
+
+Verified registry digest:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+## 13.18 Verify Image in ECR
+
+After the pipeline:
+
+```bash
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --query 'imageDetails[?contains(imageTags, `1.1.1-2`)].{
+    Tags:imageTags,
+    Digest:imageDigest,
+    PushedAt:imagePushedAt
+  }' \
+  --output yaml
+```
+
+Expected tag:
+
+```text
+1.1.1-2
+```
+
+Expected digest:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+# Initial Deployment Failure
+
+## 13.19 First Full EKS Deployment Attempt
+
+Before the final fix, Jenkins successfully completed:
+
+```text
+Increment Version
+Build Application
+Build Docker Image
+Push Docker Image
+```
+
+The first deployment attempt used image:
+
+```text
+java-maven-app:1.1.1-1
+```
+
+That image had already reached ECR.
+
+The pipeline then entered:
+
+```text
+Deploy
+```
+
+---
+
+## 13.20 Failure Point
+
+The Deploy stage successfully verified that:
+
+```text
+kubectl exists
+envsubst exists
+kubernetes/deployment.yaml exists
+kubernetes/service.yaml exists
+```
+
+Then it attempted:
+
+```bash
+envsubst \
+  < kubernetes/deployment.yaml \
+  | kubectl apply \
+      --namespace default \
+      -f -
+```
+
+At this point the AWS authentication invoked by the EKS kubeconfig failed.
+
+Observed error included:
+
+```text
+NoCredentials
+Unable to locate credentials
+```
+
+and Kubernetes validation failed because its authentication executable could not obtain the EKS token.
+
+---
+
+## 13.21 Important Diagnostic Observation
+
+This failure happened **after**:
+
+```text
+ECR authentication succeeded
+Docker image was pushed
+```
+
+Therefore:
+
+```text
+AWS credentials existed in Jenkins
+```
+
+but they were not available in the Deploy stage.
+
+That distinction was the key to identifying the root cause.
+
+---
+
+## 13.22 Root Cause
+
+The original pipeline credential scope looked conceptually like:
+
+```text
+Push Docker Image
+        │
+        └── withCredentials(...)
+                │
+                ├── aws ecr get-login-password
+                └── docker push
+        │
+        ▼
+credential scope ends
+
+Deploy
+        │
+        └── kubectl
+                │
+                └── EKS kubeconfig authentication
+                        │
+                        └── AWS credentials required
+```
+
+By the time:
+
+```text
+kubectl
+```
+
+needed AWS authentication, the earlier ECR:
+
+```groovy
+withCredentials(...)
+```
+
+block had ended.
+
+---
+
+## 13.23 What Was Not Broken
+
+The confirmed root cause was **not**:
+
+```text
+Docker image
+Kubernetes Deployment YAML
+Kubernetes Service YAML
+envsubst
+kubectl installation
+ECR push
+EKS cluster existence
+```
+
+Do not modify unrelated infrastructure when the actual failure is credential scope.
+
+---
+
+# Shared Library Fix
+
+## 13.24 Fix Branch
+
+Shared-library branch:
+
+```text
+fix/eks-deployment-aws-credentials
+```
+
+Verified fix commit:
+
+```text
+9aae486
+fix: provide AWS credentials during EKS deployment
+```
+
+---
+
+## 13.25 Deploy Stage Before Fix
+
+```groovy
+stage('Deploy') {
+    steps {
+        script {
+            deployToEks(
+                appDir,
+                manifestDir,
+                appName,
+                imageName,
+                env.IMAGE_TAG,
+                namespace
+            )
+        }
+    }
+}
+```
+
+---
+
+## 13.26 Deploy Stage After Fix
+
+```groovy
+stage('Deploy') {
+    steps {
+        script {
+            withCredentials([
+                usernamePassword(
+                    credentialsId: ecrCredentialsId,
+                    usernameVariable: 'AWS_ACCESS_KEY_ID',
+                    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                )
+            ]) {
+                withEnv([
+                    "AWS_DEFAULT_REGION=${awsRegion}",
+                    "AWS_REGION=${awsRegion}"
+                ]) {
+                    deployToEks(
+                        appDir,
+                        manifestDir,
+                        appName,
+                        imageName,
+                        env.IMAGE_TAG,
+                        namespace
+                    )
+                }
+            }
+        }
+    }
+}
+```
+
+The same AWS credential is reused.
+
+No new secret was required.
+
+---
+
+## 13.27 Why AWS Region Is Also Bound
+
+The fix exposes:
+
+```text
+AWS_DEFAULT_REGION
+AWS_REGION
+```
+
+during deployment.
+
+This gives AWS CLI authentication/token generation an explicit region:
+
+```text
+ca-central-1
+```
+
+and avoids relying on hidden host configuration.
+
+---
+
+# Fix Verification Before Merge
+
+## 13.28 Temporary Application Branch
+
+Instead of merging the shared-library fix immediately, it was tested through:
+
+```text
+bugfix/verify-eks-deployment-credentials
+```
+
+The application temporarily loaded:
+
+```text
+jenkins-shared-library@fix/eks-deployment-aws-credentials
+```
+
+This tested the library fix against a real consumer pipeline.
+
+---
+
+## 13.29 Verification Commit
+
+Application test commit:
+
+```text
+1f772e5
+test: verify EKS deployment credentials fix
+```
+
+Jenkins then ran the entire deployment workflow from that branch.
+
+---
+
+## 13.30 Verified Test Deployment
+
+The verification pipeline successfully produced:
+
+```text
+deployment.apps/java-maven-app created
+
+service/java-maven-app created
+
+deployment "java-maven-app" successfully rolled out
+```
+
+The test proved the AWS credential fix resolved the EKS deployment failure.
+
+---
+
+## 13.31 Verification Version Commit
+
+That temporary pipeline also created:
+
+```text
+2fbd4ef
+ci: version bump
+```
+
+on:
+
+```text
+bugfix/verify-eks-deployment-credentials
+```
+
+This proved the normal commit-back mechanism still worked after the deployment fix.
+
+---
+
+## 13.32 Restore Default Shared Library
+
+After validation, the application branch restored:
+
+```groovy
+@Library('jenkins-shared-library') _
+```
+
+rather than permanently pointing at the fix branch.
+
+Verified commit:
+
+```text
+48a5467
+ci: restore shared library default version
+```
+
+---
+
+## 13.33 Merge Shared-Library Fix
+
+After successful integration verification, merge the library fix to:
+
+```text
+master
+```
+
+Verified merge:
+
+```text
+5bcdcbd
+merge: fix EKS deployment AWS credentials
+```
+
+The normal application Jenkinsfile could then return to:
+
+```groovy
+@Library('jenkins-shared-library') _
+```
+
+and receive the corrected master implementation.
+
+---
+
+# Final Successful Develop Deployment
+
+## 13.34 Pipeline Source Commit
+
+Jenkins checked out:
+
+```text
+e217b83
+merge: configure AWS ECR deployment
+```
+
+from:
+
+```text
+develop
+```
+
+and loaded:
+
+```text
+jenkins-shared-library@master
+```
+
+with the EKS credential fix already merged.
+
+---
+
+## 13.35 Successful Version Increment
+
+Verified:
+
+```text
+1.1.0-SNAPSHOT
+→ 1.1.1
+```
+
+Image tag:
+
+```text
+1.1.1-2
+```
+
+---
+
+## 13.36 Successful Maven Build
+
+Verified:
+
+```text
+Tests run: 1
+Failures: 0
+Errors: 0
+Skipped: 0
+```
+
+Artifact:
+
+```text
+target/java-maven-app-1.1.1.jar
+```
+
+Result:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+## 13.37 Successful Docker Build
+
+Image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+Docker completed the image build successfully.
+
+---
+
+## 13.38 Successful ECR Push
+
+Verified:
+
+```text
+Login Succeeded
+```
+
+then:
+
+```text
+1.1.1-2
+```
+
+was pushed.
+
+Digest:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+# Kubernetes Manifest Rendering
+
+## 13.39 Deployment Variables
+
+The Deploy stage supplies:
+
+```text
+APP_NAME=java-maven-app
+
+IMAGE_NAME=
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+
+IMAGE_TAG=
+1.1.1-2
+
+K8S_NAMESPACE=
+default
+```
+
+---
+
+## 13.40 Render Deployment
+
+The shared library runs:
+
+```bash
+envsubst \
+  < kubernetes/deployment.yaml \
+  | kubectl apply \
+      --namespace "$K8S_NAMESPACE" \
+      -f -
+```
+
+Conceptually the rendered image becomes:
+
+```yaml
+image: 002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+The rendered file is streamed directly to:
+
+```text
+kubectl
+```
+
+and does not need to be committed.
+
+---
+
+## 13.41 Render Service
+
+The pipeline runs:
+
+```bash
+envsubst \
+  < kubernetes/service.yaml \
+  | kubectl apply \
+      --namespace "$K8S_NAMESPACE" \
+      -f -
+```
+
+---
+
+# Kubernetes Apply
+
+## 13.42 Deployment Result
+
+Successful final run:
+
+```text
+deployment.apps/java-maven-app configured
+```
+
+The wording:
+
+```text
+configured
+```
+
+means the Deployment already existed from the successful fix-verification deployment and was updated to the new desired state.
+
+---
+
+## 13.43 Service Result
+
+Successful final run:
+
+```text
+service/java-maven-app unchanged
+```
+
+This is expected.
+
+The Service configuration did not need to change merely because a new container image was deployed.
+
+---
+
+## 13.44 Rollout Verification
+
+The pipeline executes:
+
+```bash
+kubectl rollout status \
+  deployment/java-maven-app \
+  --namespace default \
+  --timeout=180s
+```
+
+Verified:
+
+```text
+deployment "java-maven-app" successfully rolled out
+```
+
+A deployment must not be considered successful merely because:
+
+```text
+kubectl apply
+```
+
+returned without syntax errors.
+
+The rollout itself must become successful.
+
+---
+
+# Post-Deployment Verification
+
+## 13.45 Deployment Health
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified:
+
+```text
+READY:
+1/1
+
+UP-TO-DATE:
+1
+
+AVAILABLE:
+1
+```
+
+Expected image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+---
+
+## 13.46 Pod Health
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Expected:
+
+```text
+READY:
+1/1
+
+STATUS:
+Running
+
+RESTARTS:
+0
+```
+
+---
+
+## 13.47 Verify Exact Running Image
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+```
+
+Verified:
+
+```text
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+ImageID:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app@sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+This proves the cluster is running the image that was pushed by Jenkins.
+
+---
+
+## 13.48 Digest Verification
+
+The most reliable deployment-chain evidence is:
+
+```text
+Jenkins push digest
+        =
+ECR digest
+        =
+running Pod ImageID digest
+```
+
+For the successful image:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+This ties together:
+
+```text
+CI build
+→ registry
+→ Kubernetes runtime
+```
+
+---
+
+# Commit Version Update
+
+## 13.49 Why Commit Happens After Deployment
+
+Pipeline order:
+
+```text
+Deploy
+→ successful rollout
+→ Commit Version Update
+```
+
+This means Jenkins does not commit the new Maven version until the deployment stage has succeeded.
+
+If deployment fails:
+
+```text
+Commit Version Update
+```
+
+is skipped.
+
+This happened during the first failed EKS deployment.
+
+---
+
+## 13.50 Git Status Before Commit
+
+Successful pipeline showed:
+
+```text
+M pom.xml
+```
+
+Only `pom.xml` was changed by version incrementing.
+
+---
+
+## 13.51 Jenkins Git Identity
+
+Jenkins configured:
+
+```bash
+git config user.email \
+  jenkins@example.com
+
+git config user.name \
+  jenkins
+```
+
+This produces the predictable machine identity required by Ignore Committer Strategy.
+
+---
+
+## 13.52 Stage Only Maven Version
+
+Jenkins runs:
+
+```bash
+git add pom.xml
+```
+
+Then:
+
+```bash
+git diff --cached --quiet
+```
+
+If there is no staged change, it exits without creating an unnecessary commit.
+
+---
+
+## 13.53 Successful Version Commit
+
+Verified commit:
+
+```text
+09c96af
+ci: version bump
+```
+
+Jenkins was in detached HEAD state:
+
+```text
+[detached HEAD 09c96af]
+```
+
+which is normal for Jenkins SCM checkout behavior.
+
+---
+
+## 13.54 Detached HEAD Push
+
+The helper therefore pushes explicitly:
+
+```text
+HEAD:develop
+```
+
+rather than assuming a local branch checkout.
+
+Verified GitHub push:
+
+```text
+e217b83..09c96af
+HEAD -> develop
+```
+
+---
+
+## 13.55 Git Authentication
+
+The helper creates temporary:
+
+```text
+GIT_ASKPASS
+```
+
+and removes it after the push.
+
+This allows:
+
+```text
+github-token
+```
+
+to authenticate the push without permanently rewriting the repository remote with embedded credentials.
+
+---
+
+## 13.56 GitHub vs GitLab Commit-Back
+
+The automatic Jenkins commit-back targets:
+
+```text
+GitHub
+```
+
+because GitHub is the primary CI repository.
+
+The Jenkins helper does **not** automatically push the same version commit to GitLab.
+
+Therefore after the Jenkins run:
+
+```text
+GitHub develop
+→ updated automatically
+
+GitLab develop
+→ synchronize manually
+```
+
+when maintaining the required dual-remote mirror.
+
+---
+
+## 13.57 Synchronize GitLab After Jenkins Commit
+
+On the local workstation:
+
+```bash
+git fetch github
+git fetch gitlab
+```
+
+Ensure the local branch is clean.
+
+Then update `develop` from GitHub as needed.
+
+Example:
+
+```bash
+git switch develop
+
+git pull --ff-only \
+  github \
+  develop
+```
+
+Then:
+
+```bash
+git push \
+  gitlab \
+  develop
+```
+
+Do not create a duplicate manual version commit.
+
+The Jenkins commit already exists.
+
+---
+
+## 13.58 Verify All Three Develop References
+
+```bash
+git fetch github
+git fetch gitlab
+
+printf 'Local:  '
+git rev-parse develop
+
+printf 'GitHub: '
+git rev-parse github/develop
+
+printf 'GitLab: '
+git rev-parse gitlab/develop
+```
+
+Final verified commit:
+
+```text
+09c96af58fd465c9adb18b6a54aba839109a90b6
+```
+
+All three copies eventually matched.
+
+---
+
+# Ignore Committer Verification
+
+## 13.59 Machine Commit Must Not Cause Infinite Build
+
+The push:
+
+```text
+09c96af
+ci: version bump
+```
+
+is authored/committed as:
+
+```text
+jenkins@example.com
+```
+
+The Multibranch Pipeline build strategy must recognize this author and suppress another recursive pipeline.
+
+Expected:
+
+```text
+Jenkins pushes version
+        ↓
+GitHub event
+        ↓
+Ignore Committer Strategy
+        ↓
+committer = jenkins@example.com
+        ↓
+no recursive build
+```
+
+---
+
+# Pipeline Final Result
+
+## 13.60 Successful Post Actions
+
+The verified pipeline printed:
+
+```text
+Pipeline finished.
+
+Pipeline completed successfully.
+```
+
+Final Jenkins status:
+
+```text
+Finished: SUCCESS
+```
+
+A deployment is not considered complete until Jenkins reaches:
+
+```text
+SUCCESS
+```
+
+and the target Kubernetes deployment is independently verified.
+
+---
+
+# Deployment Evidence
+
+## 13.61 Jenkins Evidence
+
+Capture:
+
+```text
+Multibranch develop job
+
+successful Stage View
+
+Increment Version
+Build Application
+Build Docker Image
+Push Docker Image
+Deploy
+Commit Version Update
+
+Finished: SUCCESS
+```
+
+Do not capture credential values.
+
+---
+
+## 13.62 Version Evidence
+
+Capture console output showing:
+
+```text
+1.1.0-SNAPSHOT
+→ 1.1.1
+
+IMAGE_TAG:
+1.1.1-2
+```
+
+---
+
+## 13.63 Test Evidence
+
+Capture:
+
+```text
+Tests run: 1
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+---
+
+## 13.64 ECR Evidence
+
+Run:
+
+```bash
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --query 'imageDetails[?contains(imageTags, `1.1.1-2`)].{
+    Tags:imageTags,
+    Digest:imageDigest,
+    PushedAt:imagePushedAt
+  }' \
+  --output yaml
+```
+
+Capture:
+
+```text
+tag:
+1.1.1-2
+
+digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+## 13.65 Kubernetes Evidence
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Capture:
+
+```text
+Deployment 1/1
+
+Pod Running
+
+Restarts 0
+
+image 1.1.1-2
+```
+
+---
+
+## 13.66 Git Evidence
+
+Run:
+
+```bash
+git log \
+  -5 \
+  --oneline \
+  --decorate
+```
+
+Expected newest application commit:
+
+```text
+09c96af ci: version bump
+```
+
+Then:
+
+```bash
+git show \
+  --stat \
+  09c96af
+```
+
+Only:
+
+```text
+pom.xml
+```
+
+should have been modified by that commit.
+
+---
+
+# Deployment Troubleshooting
+
+## 13.67 Pipeline Fails Before Build
+
+Check:
+
+```text
+SCM checkout
+shared library
+Maven tool
+credentials
+```
+
+Do not troubleshoot EKS before confirming which stage failed.
+
+---
+
+## 13.68 Maven Test Failure
+
+Stop deployment.
+
+Inspect:
+
+```text
+test failure
+application code
+ApplicationTest
+dependencies
+Java version
+```
+
+Do not push or deploy an image from a failed Maven build.
+
+---
+
+## 13.69 Docker Build Failure
+
+Check:
+
+```text
+target JAR exists
+Dockerfile path
+.dockerignore
+Docker daemon
+Docker permissions
+CPU architecture
+```
+
+---
+
+## 13.70 ECR Login Failure
+
+Check:
+
+```text
+aws_ecr_creds
+AWS region
+IAM permissions
+AWS CLI
+repository URI
+Docker availability
+```
+
+Run identity test only inside the credential-bound environment:
+
+```bash
+aws sts get-caller-identity
+```
+
+---
+
+## 13.71 ECR Push Succeeds but EKS Deploy Fails
+
+Do **not** assume the AWS credential itself is invalid.
+
+Check whether the credentials are still available during:
+
+```text
+Deploy
+```
+
+This exact project failure was caused by stage-scoped credentials ending after the ECR push.
+
+---
+
+## 13.72 `Unable to locate credentials`
+
+For this project, confirmed solution:
+
+```text
+wrap Deploy stage in withCredentials
++
+set AWS_REGION/AWS_DEFAULT_REGION
+```
+
+Do not solve it by:
+
+```text
+hardcoding AWS keys
+exporting permanent server credentials
+committing ~/.aws/credentials
+```
+
+---
+
+## 13.73 Kubernetes Manifest Failure
+
+Before changing infrastructure, locally render:
+
+```bash
+export APP_NAME=java-maven-app
+
+export IMAGE_NAME=002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+
+export IMAGE_TAG=1.1.1-2
+
+envsubst \
+  < kubernetes/deployment.yaml
+
+envsubst \
+  < kubernetes/service.yaml
+```
+
+Check:
+
+```text
+valid image
+matching labels/selectors
+port 8080
+Service targetPort 8080
+```
+
+---
+
+## 13.74 Rollout Timeout
+
+If:
+
+```bash
+kubectl rollout status ...
+```
+
+times out:
+
+inspect:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -o wide
+
+kubectl describe deployment \
+  java-maven-app \
+  --namespace default
+
+kubectl describe pods \
+  --namespace default \
+  -l app=java-maven-app
+
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+Possible causes:
+
+```text
+image pull problem
+container startup failure
+bad image architecture
+insufficient node capacity
+application crash
+incorrect image name/tag
+```
+
+---
+
+## 13.75 Do Not Re-run Blindly
+
+A failed pipeline may already have:
+
+```text
+incremented pom.xml in workspace
+
+built an image
+
+pushed a versioned image
+
+partially changed Kubernetes resources
+```
+
+Before rerunning:
+
+```text
+identify completed stages
+identify failed stage
+inspect actual target state
+fix root cause
+then rerun
+```
+
+This project demonstrates that principle because the first failed deployment already pushed image tag:
+
+```text
+1.1.1-1
+```
+
+before deployment failed.
+
+---
+
+# Deployment Cost
+
+## 13.76 Additional Resource Created by Deployment
+
+Applying:
+
+```yaml
+type: LoadBalancer
+```
+
+causes Kubernetes/AWS to provision an external AWS load balancer.
+
+Therefore Phase 13 adds an additional chargeable resource.
+
+The load balancer is investigated fully in:
+
+```text
+Phase 14 — Networking
+```
+
+---
+
+# Security Review
+
+## 13.77 Deployment Secrets
+
+Verified good practices:
+
+```text
+AWS credentials supplied through Jenkins Credentials
+
+GitHub PAT supplied through Jenkins Credentials
+
+secrets masked in Jenkins output
+
+no AWS keys in Jenkinsfile
+
+no token in Kubernetes manifests
+
+temporary GIT_ASKPASS removed
+
+only pom.xml committed automatically
+```
+
+---
+
+## 13.78 Current Limitations
+
+Known future improvements:
+
+```text
+Docker credential helper
+
+non-root application container
+
+short-lived AWS authentication
+
+least-privilege dedicated Jenkins AWS role
+
+branch-specific deployment controls
+
+shared-library version tags
+
+health/readiness/liveness probes
+
+resource requests/limits
+```
+
+These do not invalidate the verified Nana-aligned deployment.
+
+---
+
+# Phase 13 Verification
+
+## 13.79 Deployment Completion Checklist
+
+```text
+[ ] develop pipeline discovered by Jenkins
+[ ] correct application source checked out
+[ ] shared library master loaded
+
+[ ] Maven version incremented
+[ ] 1.1.0-SNAPSHOT changed to 1.1.1
+[ ] IMAGE_TAG generated as 1.1.1-2
+
+[ ] mvn clean package executed
+[ ] automated test executed
+[ ] 1 test passed
+[ ] BUILD SUCCESS
+[ ] java-maven-app-1.1.1.jar created
+
+[ ] Docker image built
+[ ] correct ECR image name used
+[ ] ECR authentication succeeded
+[ ] image 1.1.1-2 pushed
+[ ] ECR digest recorded
+
+[ ] AWS credentials available during Deploy
+[ ] deployment manifest found
+[ ] service manifest found
+[ ] envsubst available
+[ ] Deployment applied
+[ ] Service applied
+[ ] rollout succeeded
+
+[ ] Kubernetes Deployment 1/1
+[ ] Pod Running
+[ ] Pod Ready=true
+[ ] Restarts=0
+[ ] Pod image tag = 1.1.1-2
+[ ] Pod ImageID digest matches ECR digest
+
+[ ] pom.xml staged by Jenkins
+[ ] ci: version bump created
+[ ] commit 09c96af created
+[ ] HEAD pushed to GitHub develop
+[ ] Ignore Committer Strategy prevents recursive build
+
+[ ] GitLab develop synchronized later
+[ ] local/GitHub/GitLab develop hashes match
+
+[ ] Jenkins Finished: SUCCESS
+```
+
+---
+
+## 13.80 Confirmed Troubleshooting Record
+
+```text
+Problem:
+EKS deployment failed after successful ECR push.
+
+Observed error:
+AWS NoCredentials / Unable to locate credentials
+during kubectl/EKS authentication.
+
+Root cause:
+AWS credentials were scoped only to the ECR push stage.
+
+Fix:
+Bind aws_ecr_creds during Deploy
+and provide AWS_REGION/AWS_DEFAULT_REGION.
+
+Shared-library fix:
+9aae486
+
+Integration test branch:
+bugfix/verify-eks-deployment-credentials
+
+Verification commit:
+1f772e5
+
+Verification version commit:
+2fbd4ef
+
+Restore-default-library commit:
+48a5467
+
+Shared-library merge:
+5bcdcbd
+
+Final successful application version commit:
+09c96af
+```
+
+---
+
+## 13.81 Phase 13 Final State
+
+```text
+Version increment
+✅
+
+Maven build
+✅
+
+automated test
+✅
+
+JAR artifact
+✅
+
+Docker image
+✅
+
+ECR push
+✅
+
+EKS authentication
+✅
+
+Deployment apply
+✅
+
+Service apply
+✅
+
+rollout
+✅
+
+running image verification
+✅
+
+Git version commit-back
+✅
+
+recursive-build protection
+✅
+
+failed-first troubleshooting history
+✅
+```
+
+**Deployment is complete.**
 
 ---
 
