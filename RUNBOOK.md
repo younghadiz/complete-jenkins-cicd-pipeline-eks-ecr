@@ -4469,7 +4469,2401 @@ No cloud resource needs to exist yet.
 
 # 9. Pipeline Preparation
 
-To be documented in a later verified documentation batch.
+## 9.1 Objective
+
+Prepare the complete CI/CD pipeline locally before provisioning or changing cloud infrastructure.
+
+This phase follows the project’s local-first rule:
+
+```text
+application build
+→ tests
+→ artifact
+→ Docker image
+→ local container validation
+→ prepare Jenkins pipeline
+→ prepare Jenkins Shared Library
+→ prepare Kubernetes manifests
+→ validate files locally
+→ commit and push
+→ only then provision cloud resources
+```
+
+No Amazon EKS cluster, Amazon ECR repository, load balancer, or other chargeable AWS resource is required merely to create the pipeline files.
+
+---
+
+## 9.2 Nana Learning Sequence
+
+The TechWorld with Nana pipeline progression relevant to this project is:
+
+```text
+increment application version
+→ build application
+→ build Docker image
+→ deploy
+→ commit version update back to Git
+```
+
+The training initially demonstrated much of this directly inside a Jenkinsfile so that the CI/CD flow remained visible and easy to understand.
+
+The same concepts were later extracted into reusable Jenkins Shared Library functions.
+
+This project deliberately keeps Nana's learning sequence while moving reusable logic into the shared library.
+
+The final design is:
+
+```text
+Application repository
+        │
+        │ Jenkinsfile
+        ▼
+Jenkins Shared Library
+        │
+        ├── incrementVersion()
+        ├── buildMaven()
+        ├── buildDockerImage()
+        ├── pushToEcr()
+        ├── deployToEks()
+        └── commitVersion()
+```
+
+---
+
+# 9.3 Two Repositories Participate in the Pipeline
+
+The CI/CD implementation spans two independent repositories.
+
+Application repository:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr
+```
+
+Shared-library repository:
+
+```text
+jenkins-shared-library
+```
+
+Their responsibilities are intentionally different.
+
+Application repository:
+
+```text
+application source
+pom.xml
+Dockerfile
+Jenkinsfile
+Kubernetes manifests
+application tests
+```
+
+Shared library:
+
+```text
+pipeline orchestration
+Maven helper
+Docker helper
+registry helper
+Kubernetes deployment helper
+version increment helper
+Git commit-back helper
+pipeline configuration validation
+```
+
+This prevents the application Jenkinsfile from becoming a large collection of repeated CI/CD implementation details.
+
+---
+
+# 9.4 Shared Library Repository
+
+Local path:
+
+```text
+/Users/younghadiz/Documents/tech-workspace/jenkins-shared-library
+```
+
+GitHub:
+
+```text
+https://github.com/younghadiz/jenkins-shared-library
+```
+
+GitLab:
+
+```text
+git@gitlab.com:younghadiz/jenkins-shared-library.git
+```
+
+Before changing the library:
+
+```bash
+cd /Users/younghadiz/Documents/tech-workspace/jenkins-shared-library
+
+pwd
+
+git status
+
+git branch --show-current
+
+git remote -v
+```
+
+The historical restructure began from a clean `master` branch.
+
+---
+
+# 9.5 Why the Shared Library Was Restructured
+
+The earlier shared library was much smaller:
+
+```text
+jenkins-shared-library/
+├── vars/
+│   ├── buildJar.groovy
+│   └── buildImage.groovy
+└── src/
+    └── com/younghadiz/devops/
+        └── Docker.groovy
+```
+
+This worked for the training exercises but packed several responsibilities together.
+
+The project adopted the clearer structure:
+
+```text
+jenkins-shared-library/
+├── vars/
+│   ├── singleServicePipeline.groovy
+│   ├── multiServicePipeline.groovy
+│   ├── incrementVersion.groovy
+│   ├── buildMaven.groovy
+│   ├── buildDockerImage.groovy
+│   ├── pushToDockerHub.groovy
+│   ├── pushToEcr.groovy
+│   ├── deployToEks.groovy
+│   └── commitVersion.groovy
+│
+├── src/
+│   └── com/younghadiz/devops/
+│       ├── PipelineConfig.groovy
+│       ├── DockerUtils.groovy
+│       ├── AwsUtils.groovy
+│       └── KubernetesUtils.groovy
+│
+├── resources/
+│   └── com/younghadiz/templates/
+│       └── deployment.yaml.template
+│
+├── test/
+│   └── README.md
+│
+├── .gitignore
+└── README.md
+```
+
+The key design rule is:
+
+```text
+vars/
+→ Jenkins-facing public pipeline steps
+
+src/
+→ reusable implementation classes
+
+resources/
+→ reusable reference resources
+
+test/
+→ future shared-library tests
+```
+
+---
+
+# 9.6 Shared Library Restructure Branch
+
+The historical branch was:
+
+```text
+feature/restructure-shared-library
+```
+
+Before switching:
+
+```bash
+git status
+git branch --show-current
+git remote -v
+```
+
+Create:
+
+```bash
+git switch -c feature/restructure-shared-library
+```
+
+---
+
+# 9.7 Remove the Legacy Files
+
+Before deleting anything:
+
+```bash
+pwd
+git status
+git branch --show-current
+git remote -v
+```
+
+The legacy files removed were:
+
+```text
+vars/buildJar.groovy
+vars/buildImage.groovy
+src/com/younghadiz/devops/Docker.groovy
+```
+
+A temporary repository-level `Jenkinsfile` that was not required for the shared library was also removed.
+
+Commands used during the restructure:
+
+```bash
+rm Jenkinsfile
+rm vars/buildJar.groovy
+rm vars/buildImage.groovy
+rm src/com/younghadiz/devops/Docker.groovy
+```
+
+Verify:
+
+```bash
+for file in \
+  Jenkinsfile \
+  vars/buildJar.groovy \
+  vars/buildImage.groovy \
+  src/com/younghadiz/devops/Docker.groovy
+do
+    if [ -e "$file" ]; then
+        echo "ERROR - STILL EXISTS: $file"
+    else
+        echo "REMOVED: $file"
+    fi
+done
+```
+
+Historical verification showed all four were removed.
+
+---
+
+# 9.8 `PipelineConfig.groovy`
+
+Path:
+
+```text
+src/com/younghadiz/devops/PipelineConfig.groovy
+```
+
+Complete file:
+
+```groovy
+package com.younghadiz.devops
+
+class PipelineConfig implements Serializable {
+
+    static String required(Map config, String key) {
+        def value = config[key]
+
+        if (value == null || value.toString().trim().isEmpty()) {
+            throw new IllegalArgumentException(
+                "Required pipeline configuration '${key}' was not provided."
+            )
+        }
+
+        return value.toString()
+    }
+
+    static String optional(
+        Map config,
+        String key,
+        String defaultValue = ''
+    ) {
+        def value = config[key]
+
+        if (value == null || value.toString().trim().isEmpty()) {
+            return defaultValue
+        }
+
+        return value.toString()
+    }
+}
+```
+
+Purpose:
+
+```text
+centralize required parameter validation
+centralize optional/default parameter handling
+avoid repeating validation code in pipeline entry points
+```
+
+---
+
+# 9.9 `DockerUtils.groovy`
+
+Path:
+
+```text
+src/com/younghadiz/devops/DockerUtils.groovy
+```
+
+Complete file:
+
+```groovy
+package com.younghadiz.devops
+
+class DockerUtils implements Serializable {
+
+    def script
+
+    DockerUtils(script) {
+        this.script = script
+    }
+
+    void buildImage(
+        String appDir,
+        String imageName,
+        String imageTag
+    ) {
+        validateImage(imageName, imageTag)
+
+        script.dir(appDir) {
+            script.echo "Building Docker image: ${imageName}:${imageTag}"
+
+            script.withEnv([
+                "DOCKER_IMAGE_NAME=${imageName}",
+                "DOCKER_IMAGE_TAG=${imageTag}"
+            ]) {
+                script.sh '''
+                    set -e
+
+                    command -v docker >/dev/null 2>&1 || {
+                        echo "ERROR: Docker is not available on the Jenkins agent."
+                        exit 1
+                    }
+
+                    docker build \
+                        -t "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG" \
+                        .
+                '''
+            }
+        }
+    }
+
+    void pushToDockerHub(
+        String imageName,
+        String imageTag,
+        String credentialsId
+    ) {
+        validateImage(imageName, imageTag)
+
+        script.echo "Pushing Docker image to Docker Hub: ${imageName}:${imageTag}"
+
+        script.withCredentials([
+            script.usernamePassword(
+                credentialsId: credentialsId,
+                usernameVariable: 'DOCKERHUB_USER',
+                passwordVariable: 'DOCKERHUB_PASS'
+            )
+        ]) {
+            script.withEnv([
+                "DOCKER_IMAGE_NAME=${imageName}",
+                "DOCKER_IMAGE_TAG=${imageTag}"
+            ]) {
+                script.sh '''
+                    set -e
+
+                    echo "$DOCKERHUB_PASS" |
+                        docker login \
+                            --username "$DOCKERHUB_USER" \
+                            --password-stdin
+
+                    docker push \
+                        "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+                '''
+            }
+        }
+    }
+
+    private void validateImage(
+        String imageName,
+        String imageTag
+    ) {
+        if (!imageName?.trim() ||
+            imageName == 'null' ||
+            imageName.contains('null')) {
+            script.error(
+                "Docker image name is empty or invalid: ${imageName}"
+            )
+        }
+
+        if (!imageTag?.trim()) {
+            script.error 'Docker image tag is empty.'
+        }
+    }
+}
+```
+
+This deliberately separates:
+
+```text
+Docker build
+from
+Docker registry push
+```
+
+so Jenkins can represent them as separate pipeline stages.
+
+---
+
+# 9.10 `AwsUtils.groovy`
+
+Path:
+
+```text
+src/com/younghadiz/devops/AwsUtils.groovy
+```
+
+Complete file:
+
+```groovy
+package com.younghadiz.devops
+
+class AwsUtils implements Serializable {
+
+    def script
+
+    AwsUtils(script) {
+        this.script = script
+    }
+
+    void pushToEcr(
+        String imageName,
+        String imageTag,
+        String awsRegion,
+        String ecrRegistryServer,
+        String credentialsId
+    ) {
+        validateEcrConfig(
+            imageName,
+            imageTag,
+            awsRegion,
+            ecrRegistryServer
+        )
+
+        script.echo "Pushing Docker image to AWS ECR: ${imageName}:${imageTag}"
+
+        script.withCredentials([
+            script.usernamePassword(
+                credentialsId: credentialsId,
+                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+            )
+        ]) {
+            script.withEnv([
+                "DOCKER_IMAGE_NAME=${imageName}",
+                "DOCKER_IMAGE_TAG=${imageTag}",
+                "AWS_REGION_VALUE=${awsRegion}",
+                "ECR_REGISTRY_SERVER_VALUE=${ecrRegistryServer}"
+            ]) {
+                script.sh '''
+                    set -e
+
+                    command -v aws >/dev/null 2>&1 || {
+                        echo "ERROR: AWS CLI is not installed on the Jenkins agent."
+                        exit 1
+                    }
+
+                    command -v docker >/dev/null 2>&1 || {
+                        echo "ERROR: Docker is not available on the Jenkins agent."
+                        exit 1
+                    }
+
+                    echo "Logging in to AWS ECR..."
+
+                    aws ecr get-login-password \
+                        --region "$AWS_REGION_VALUE" |
+                        docker login \
+                            --username AWS \
+                            --password-stdin "$ECR_REGISTRY_SERVER_VALUE"
+
+                    echo "Pushing Docker image to AWS ECR..."
+
+                    docker push \
+                        "$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG"
+                '''
+            }
+        }
+    }
+
+    private void validateEcrConfig(
+        String imageName,
+        String imageTag,
+        String awsRegion,
+        String ecrRegistryServer
+    ) {
+        if (!imageName?.trim() ||
+            imageName == 'null' ||
+            imageName.contains('null')) {
+            script.error(
+                "ECR image name is empty or invalid: ${imageName}"
+            )
+        }
+
+        if (!imageTag?.trim()) {
+            script.error 'ECR image tag is required.'
+        }
+
+        if (!awsRegion?.trim()) {
+            script.error 'AWS region is required for ECR.'
+        }
+
+        if (!ecrRegistryServer?.trim()) {
+            script.error 'ECR registry server is required.'
+        }
+    }
+}
+```
+
+The credential ID is only a Jenkins reference.
+
+Never store actual AWS values in this file.
+
+---
+
+# 9.11 `KubernetesUtils.groovy`
+
+Path:
+
+```text
+src/com/younghadiz/devops/KubernetesUtils.groovy
+```
+
+Complete file:
+
+```groovy
+package com.younghadiz.devops
+
+class KubernetesUtils implements Serializable {
+
+    def script
+
+    KubernetesUtils(script) {
+        this.script = script
+    }
+
+    void deployToEks(
+        String appDir,
+        String manifestDir,
+        String appName,
+        String imageName,
+        String imageTag,
+        String namespace = 'default'
+    ) {
+        validateDeploymentConfig(
+            manifestDir,
+            appName,
+            imageName,
+            imageTag,
+            namespace
+        )
+
+        script.dir(appDir) {
+            script.echo "Deploying ${appName} to Kubernetes..."
+            script.echo "Namespace: ${namespace}"
+            script.echo "Image: ${imageName}:${imageTag}"
+
+            script.withEnv([
+                "APP_NAME=${appName}",
+                "IMAGE_NAME=${imageName}",
+                "IMAGE_TAG=${imageTag}",
+                "K8S_NAMESPACE=${namespace}"
+            ]) {
+                script.sh """
+                    set -e
+
+                    command -v kubectl >/dev/null 2>&1 || {
+                        echo "ERROR: kubectl is not installed on the Jenkins agent."
+                        exit 1
+                    }
+
+                    command -v envsubst >/dev/null 2>&1 || {
+                        echo "ERROR: envsubst is not installed on the Jenkins agent."
+                        exit 1
+                    }
+
+                    test -f "${manifestDir}/deployment.yaml" || {
+                        echo "ERROR: ${manifestDir}/deployment.yaml was not found."
+                        exit 1
+                    }
+
+                    test -f "${manifestDir}/service.yaml" || {
+                        echo "ERROR: ${manifestDir}/service.yaml was not found."
+                        exit 1
+                    }
+
+                    echo "Applying Kubernetes deployment..."
+
+                    envsubst < "${manifestDir}/deployment.yaml" |
+                        kubectl apply \
+                            --namespace "\$K8S_NAMESPACE" \
+                            -f -
+
+                    echo "Applying Kubernetes service..."
+
+                    envsubst < "${manifestDir}/service.yaml" |
+                        kubectl apply \
+                            --namespace "\$K8S_NAMESPACE" \
+                            -f -
+
+                    echo "Waiting for deployment rollout..."
+
+                    kubectl rollout status \
+                        deployment/"\$APP_NAME" \
+                        --namespace "\$K8S_NAMESPACE" \
+                        --timeout=180s
+                """
+            }
+        }
+    }
+
+    private void validateDeploymentConfig(
+        String manifestDir,
+        String appName,
+        String imageName,
+        String imageTag,
+        String namespace
+    ) {
+        if (!manifestDir?.trim()) {
+            script.error 'Kubernetes manifest directory is required.'
+        }
+
+        if (!appName?.trim()) {
+            script.error 'Application name is required.'
+        }
+
+        if (!imageName?.trim()) {
+            script.error 'Docker image name is required.'
+        }
+
+        if (!imageTag?.trim()) {
+            script.error 'Docker image tag is required.'
+        }
+
+        if (!namespace?.trim()) {
+            script.error 'Kubernetes namespace is required.'
+        }
+    }
+}
+```
+
+Important separation:
+
+```text
+singleServicePipeline
+→ provides pipeline configuration and credentials
+
+deployToEks
+→ Jenkins-facing helper
+
+KubernetesUtils
+→ Kubernetes mechanics
+```
+
+This separation later made the EKS authentication problem easier to diagnose.
+
+---
+
+# 9.12 `buildMaven.groovy`
+
+Path:
+
+```text
+vars/buildMaven.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+def call(
+    String appDir = '.',
+    String mavenCommand = 'mvn clean package'
+) {
+    dir(appDir) {
+        echo 'Building Java Maven application...'
+        echo "Running Maven command: ${mavenCommand}"
+
+        sh "${mavenCommand}"
+    }
+}
+```
+
+Default command:
+
+```bash
+mvn clean package
+```
+
+This performs:
+
+```text
+clean
+→ compile
+→ test
+→ package
+```
+
+---
+
+# 9.13 `buildDockerImage.groovy`
+
+Path:
+
+```text
+vars/buildDockerImage.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+import com.younghadiz.devops.DockerUtils
+
+def call(
+    String appDir,
+    String imageName,
+    String imageTag
+) {
+    echo 'Building Docker image...'
+
+    new DockerUtils(this).buildImage(
+        appDir,
+        imageName,
+        imageTag
+    )
+}
+```
+
+---
+
+# 9.14 `pushToDockerHub.groovy`
+
+Path:
+
+```text
+vars/pushToDockerHub.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+import com.younghadiz.devops.DockerUtils
+
+def call(
+    String imageName,
+    String imageTag,
+    String credentialsId = 'dockerhub-creds'
+) {
+    echo 'Pushing Docker image to Docker Hub...'
+
+    new DockerUtils(this).pushToDockerHub(
+        imageName,
+        imageTag,
+        credentialsId
+    )
+}
+```
+
+This capability is retained for reuse even though this capstone deploys through Amazon ECR.
+
+---
+
+# 9.15 `pushToEcr.groovy`
+
+Path:
+
+```text
+vars/pushToEcr.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+import com.younghadiz.devops.AwsUtils
+
+def call(
+    String imageName,
+    String imageTag,
+    String awsRegion,
+    String ecrRegistryServer,
+    String credentialsId = 'aws_ecr_creds'
+) {
+    echo 'Pushing Docker image to AWS ECR...'
+
+    new AwsUtils(this).pushToEcr(
+        imageName,
+        imageTag,
+        awsRegion,
+        ecrRegistryServer,
+        credentialsId
+    )
+}
+```
+
+---
+
+# 9.16 `deployToEks.groovy`
+
+Path:
+
+```text
+vars/deployToEks.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+import com.younghadiz.devops.KubernetesUtils
+
+def call(
+    String appDir,
+    String manifestDir,
+    String appName,
+    String imageName,
+    String imageTag,
+    String namespace = 'default'
+) {
+    echo 'Deploying application to Amazon EKS...'
+
+    new KubernetesUtils(this).deployToEks(
+        appDir,
+        manifestDir,
+        appName,
+        imageName,
+        imageTag,
+        namespace
+    )
+}
+```
+
+---
+
+# 9.17 Maven Incremental Versioning
+
+Nana's training introduced Maven Build Helper and Versions plugins to calculate the next Maven version dynamically.
+
+Starting version:
+
+```text
+1.1.0-SNAPSHOT
+```
+
+Desired next patch version:
+
+```text
+1.1.1
+```
+
+Conceptually:
+
+```text
+major = 1
+minor = 1
+incremental = 0
+nextIncremental = 1
+```
+
+The Maven command is:
+
+```bash
+mvn build-helper:parse-version versions:set \
+  '-DnewVersion=${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.nextIncrementalVersion}' \
+  versions:commit
+```
+
+The single quotes are important in a shell context because Maven must receive `${parsedVersion...}` rather than having the shell attempt to expand those expressions.
+
+---
+
+# 9.18 `incrementVersion.groovy`
+
+Path:
+
+```text
+vars/incrementVersion.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+def call(String appDir = '.') {
+
+    def version = ''
+
+    dir(appDir) {
+        echo 'Incrementing application version...'
+
+        sh '''
+            mvn build-helper:parse-version versions:set \
+                '-DnewVersion=${parsedVersion.majorVersion}.${parsedVersion.minorVersion}.${parsedVersion.nextIncrementalVersion}' \
+                versions:commit
+        '''
+
+        def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
+
+        if (!matcher.find()) {
+            error 'Unable to read application version from pom.xml'
+        }
+
+        version = matcher.group(1)
+
+        echo "Application version: ${version}"
+    }
+
+    return version
+}
+```
+
+Verified pipeline behavior later showed:
+
+```text
+1.1.0-SNAPSHOT
+→ 1.1.1
+```
+
+The pipeline then combines this application version with Jenkins:
+
+```text
+BUILD_NUMBER
+```
+
+to produce an image tag.
+
+Example:
+
+```text
+Application version:
+1.1.1
+
+Jenkins build:
+2
+
+Docker tag:
+1.1.1-2
+```
+
+This behavior was later confirmed in the successful Jenkins build.
+
+---
+
+# 9.19 Why Jenkins Must Commit the Version Back
+
+Without commit-back:
+
+```text
+Git contains:
+1.1.0-SNAPSHOT
+
+Jenkins build #1:
+1.1.0-SNAPSHOT
+→ 1.1.1
+
+workspace disappears / next checkout occurs
+
+Git still contains:
+1.1.0-SNAPSHOT
+
+Jenkins build #2:
+1.1.0-SNAPSHOT
+→ 1.1.1
+```
+
+The version would repeatedly reset.
+
+Nana's solution was:
+
+```text
+Jenkins modifies pom.xml
+→ git add
+→ git commit
+→ git push
+```
+
+so Git becomes the source of truth for the new application version.
+
+---
+
+# 9.20 Detached HEAD Consideration
+
+Jenkins Multibranch checkouts commonly operate at a specific commit.
+
+This can result in a detached HEAD state.
+
+Therefore the safe push form is:
+
+```bash
+git push <remote> HEAD:<branch>
+```
+
+rather than relying on:
+
+```bash
+git push
+```
+
+The project implements this pattern.
+
+---
+
+# 9.21 `commitVersion.groovy`
+
+Path:
+
+```text
+vars/commitVersion.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+def call(
+    String appDir = '.',
+    String credentialsId = 'github-token',
+    String repositoryUrl = '',
+    String targetBranch = '',
+    String commitMessage = 'ci: version bump',
+    String gitUserName = 'jenkins',
+    String gitUserEmail = 'jenkins@example.com'
+) {
+    if (!repositoryUrl?.trim()) {
+        error 'Git repository URL is required.'
+    }
+
+    def branch = targetBranch?.trim()
+        ? targetBranch.trim()
+        : env.BRANCH_NAME
+
+    if (!branch?.trim()) {
+        error 'Unable to determine the Git branch for version commit.'
+    }
+
+    dir(appDir) {
+        echo 'Committing application version update...'
+        echo "Target branch: ${branch}"
+
+        withCredentials([
+            usernamePassword(
+                credentialsId: credentialsId,
+                usernameVariable: 'GIT_USER',
+                passwordVariable: 'GIT_PASS'
+            )
+        ]) {
+            withEnv([
+                "GIT_REPOSITORY_URL=${repositoryUrl}",
+                "GIT_TARGET_BRANCH=${branch}",
+                "GIT_COMMIT_MESSAGE=${commitMessage}",
+                "GIT_COMMITTER_NAME=${gitUserName}",
+                "GIT_COMMITTER_EMAIL=${gitUserEmail}"
+            ]) {
+                sh '''
+                    set -e
+
+                    git config user.email "$GIT_COMMITTER_EMAIL"
+                    git config user.name "$GIT_COMMITTER_NAME"
+
+                    echo "Git status before version commit:"
+                    git status --short
+
+                    echo "Current Git branch information:"
+                    git branch --show-current || true
+
+                    git add pom.xml
+
+                    if git diff --cached --quiet; then
+                        echo "No version change to commit."
+                        exit 0
+                    fi
+
+                    git commit -m "$GIT_COMMIT_MESSAGE"
+
+                    echo "Pushing version commit to $GIT_TARGET_BRANCH..."
+
+                    GIT_ASKPASS="$(mktemp)"
+                    export GIT_ASKPASS
+                    export GIT_TERMINAL_PROMPT=0
+
+                    cat > "$GIT_ASKPASS" <<'EOF'
+#!/bin/sh
+
+case "$1" in
+    *Username*)
+        printf '%s\n' "$GIT_USER"
+        ;;
+    *Password*)
+        printf '%s\n' "$GIT_PASS"
+        ;;
+esac
+EOF
+
+                    chmod 700 "$GIT_ASKPASS"
+
+                    trap 'rm -f "$GIT_ASKPASS"' EXIT
+
+                    git push \
+                        "$GIT_REPOSITORY_URL" \
+                        "HEAD:$GIT_TARGET_BRANCH"
+                '''
+            }
+        }
+    }
+}
+```
+
+---
+
+# 9.22 Why `GIT_ASKPASS` Is Used
+
+An earlier simple Nana-style implementation embedded the username/password into a temporary HTTPS remote URL.
+
+This teaches the Git authentication concept clearly but can expose credentials more easily through process output or remote configuration.
+
+The current shared-library implementation instead creates a temporary:
+
+```text
+GIT_ASKPASS
+```
+
+helper.
+
+Jenkins supplies:
+
+```text
+GIT_USER
+GIT_PASS
+```
+
+through Credentials Binding.
+
+Git asks the helper for authentication only when needed.
+
+The temporary script is removed through:
+
+```bash
+trap 'rm -f "$GIT_ASKPASS"' EXIT
+```
+
+This preserves Nana's commit-back concept while avoiding permanently embedding credentials into the Git remote.
+
+---
+
+# 9.23 Only `pom.xml` Is Committed Automatically
+
+The helper intentionally runs:
+
+```bash
+git add pom.xml
+```
+
+rather than:
+
+```bash
+git add .
+```
+
+This is important.
+
+It prevents unrelated Jenkins workspace changes from accidentally becoming part of the automated CI commit.
+
+---
+
+# 9.24 Jenkins Commit Identity
+
+The automated identity is:
+
+```text
+jenkins <jenkins@example.com>
+```
+
+This identity has two purposes:
+
+1. Identify machine-generated version commits.
+2. Allow the Jenkins Multibranch Ignore Committer Strategy to exclude these commits from starting another build.
+
+---
+
+# 9.25 Pipeline Loop Problem
+
+Without protection:
+
+```text
+developer commit
+→ webhook
+→ Jenkins
+→ increment version
+→ Jenkins commit
+→ webhook
+→ Jenkins
+→ increment again
+→ Jenkins commit
+→ webhook
+→ ...
+```
+
+This becomes an infinite CI loop.
+
+---
+
+# 9.26 Nana's Ignore Committer Strategy
+
+The chosen learning method is the Jenkins:
+
+```text
+Ignore Committer Strategy
+```
+
+Configure the Multibranch Pipeline so commits from:
+
+```text
+jenkins@example.com
+```
+
+do not cause another build.
+
+Conceptual flow:
+
+```text
+Developer commit
+      │
+      ▼
+GitHub webhook
+      │
+      ▼
+Jenkins Multibranch
+      │
+      ▼
+pipeline runs
+      │
+      ▼
+Jenkins commits pom.xml
+as jenkins@example.com
+      │
+      ▼
+SCM event occurs
+      │
+      ▼
+Ignore Committer Strategy
+      │
+      ▼
+no recursive pipeline
+```
+
+This preserves normal developer-triggered builds while suppressing the machine-generated version commit.
+
+---
+
+# 9.27 Shared Library Single-Service Entry Point
+
+This project contains one independently deployable application.
+
+Therefore it uses:
+
+```text
+singleServicePipeline.groovy
+```
+
+and not:
+
+```text
+multiServicePipeline.groovy
+```
+
+A Jenkins **Multibranch Pipeline** and a **multi-service pipeline** are different concepts.
+
+```text
+Multibranch Pipeline
+→ Jenkins discovers multiple Git branches
+
+multiServicePipeline
+→ one repository contains multiple independently buildable/deployable services
+```
+
+This capstone uses:
+
+```text
+Jenkins Multibranch Pipeline
++
+singleServicePipeline()
+```
+
+---
+
+# 9.28 `singleServicePipeline.groovy`
+
+Path:
+
+```text
+vars/singleServicePipeline.groovy
+```
+
+Complete final file:
+
+```groovy
+#!/usr/bin/env groovy
+
+import com.younghadiz.devops.PipelineConfig
+
+def call(Map config = [:]) {
+
+    def appDir = PipelineConfig.optional(
+        config,
+        'appDir',
+        '.'
+    )
+
+    def manifestDir = PipelineConfig.optional(
+        config,
+        'manifestDir',
+        'kubernetes'
+    )
+
+    def appName = PipelineConfig.required(
+        config,
+        'appName'
+    )
+
+    def registryType = PipelineConfig.optional(
+        config,
+        'registryType',
+        'ecr'
+    ).toLowerCase()
+
+    def imageName = PipelineConfig.required(
+        config,
+        'imageName'
+    )
+
+    def awsRegion = PipelineConfig.optional(
+        config,
+        'awsRegion',
+        ''
+    )
+
+    def ecrRegistryServer = PipelineConfig.optional(
+        config,
+        'ecrRegistryServer',
+        ''
+    )
+
+    def ecrCredentialsId = PipelineConfig.optional(
+        config,
+        'ecrCredentialsId',
+        'aws_ecr_creds'
+    )
+
+    def dockerHubCredentialsId = PipelineConfig.optional(
+        config,
+        'dockerHubCredentialsId',
+        'dockerhub-creds'
+    )
+
+    def gitCredentialsId = PipelineConfig.optional(
+        config,
+        'gitCredentialsId',
+        'github-token'
+    )
+
+    def repositoryUrl = PipelineConfig.required(
+        config,
+        'repositoryUrl'
+    )
+
+    def namespace = PipelineConfig.optional(
+        config,
+        'namespace',
+        'default'
+    )
+
+    pipeline {
+        agent any
+
+        tools {
+            maven 'Maven'
+        }
+
+        stages {
+
+            stage('Increment Version') {
+                steps {
+                    script {
+                        echo "Running pipeline for branch: ${env.BRANCH_NAME}"
+
+                        def version = incrementVersion(appDir)
+
+                        env.APP_VERSION = version
+                        env.IMAGE_TAG = "${version}-${env.BUILD_NUMBER}"
+
+                        echo "Application version: ${env.APP_VERSION}"
+                        echo "Docker image tag: ${env.IMAGE_TAG}"
+                    }
+                }
+            }
+
+            stage('Build Application') {
+                steps {
+                    script {
+                        buildMaven(
+                            appDir,
+                            'mvn clean package'
+                        )
+                    }
+                }
+            }
+
+            stage('Build Docker Image') {
+                steps {
+                    script {
+                        buildDockerImage(
+                            appDir,
+                            imageName,
+                            env.IMAGE_TAG
+                        )
+                    }
+                }
+            }
+
+            stage('Push Docker Image') {
+                steps {
+                    script {
+
+                        if (registryType == 'ecr') {
+
+                            pushToEcr(
+                                imageName,
+                                env.IMAGE_TAG,
+                                awsRegion,
+                                ecrRegistryServer,
+                                ecrCredentialsId
+                            )
+
+                        } else if (registryType == 'dockerhub') {
+
+                            pushToDockerHub(
+                                imageName,
+                                env.IMAGE_TAG,
+                                dockerHubCredentialsId
+                            )
+
+                        } else {
+                            error(
+                                "Unsupported registry type: ${registryType}"
+                            )
+                        }
+                    }
+                }
+            }
+
+            stage('Deploy') {
+                steps {
+                    script {
+                        withCredentials([
+                            usernamePassword(
+                                credentialsId: ecrCredentialsId,
+                                usernameVariable: 'AWS_ACCESS_KEY_ID',
+                                passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+                            )
+                        ]) {
+                            withEnv([
+                                "AWS_DEFAULT_REGION=${awsRegion}",
+                                "AWS_REGION=${awsRegion}"
+                            ]) {
+                                deployToEks(
+                                    appDir,
+                                    manifestDir,
+                                    appName,
+                                    imageName,
+                                    env.IMAGE_TAG,
+                                    namespace
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            stage('Commit Version Update') {
+                steps {
+                    script {
+                        commitVersion(
+                            appDir,
+                            gitCredentialsId,
+                            repositoryUrl,
+                            env.BRANCH_NAME,
+                            'ci: version bump',
+                            'jenkins',
+                            'jenkins@example.com'
+                        )
+                    }
+                }
+            }
+        }
+
+        post {
+            success {
+                echo 'Pipeline completed successfully.'
+            }
+
+            failure {
+                echo 'Pipeline failed.'
+            }
+
+            always {
+                echo 'Pipeline finished.'
+            }
+        }
+    }
+}
+```
+
+### Important historical note
+
+The AWS credential wrapper around the Deploy stage was added **later as a confirmed troubleshooting fix**.
+
+The original version called:
+
+```groovy
+deployToEks(...)
+```
+
+without wrapping the Deploy stage in AWS credentials.
+
+That later caused EKS authentication to fail because kubeconfig invokes:
+
+```text
+aws eks get-token
+```
+
+and the ECR credential scope had already ended.
+
+The confirmed fix is documented later in the troubleshooting/deployment sections.
+
+The complete file above represents the **final verified implementation**, not the first pre-fix version.
+
+---
+
+# 9.29 `multiServicePipeline.groovy`
+
+Path:
+
+```text
+vars/multiServicePipeline.groovy
+```
+
+Complete file:
+
+```groovy
+#!/usr/bin/env groovy
+
+/*
+  Multi-service pipeline entry point.
+
+  Intended for repositories containing multiple independently
+  buildable and deployable services, for example:
+
+  services/
+  ├── frontend/
+  ├── backend/
+  └── worker/
+
+  This pipeline will be implemented when a project requires
+  multiple services.
+
+  Current single-service projects should use:
+
+      singleServicePipeline(...)
+
+  Keeping this entry point separate prevents multi-service
+  requirements from adding unnecessary complexity to the
+  single-service pipeline.
+*/
+
+def call(Map config = [:]) {
+    error '''
+Multi-service pipeline is not implemented yet.
+
+Use singleServicePipeline(...) for a single deployable application.
+Implement this pipeline when a project contains multiple independently
+buildable or deployable services.
+'''
+}
+```
+
+This file exists intentionally but is not used by the capstone.
+
+---
+
+# 9.30 Shared Library Reference Kubernetes Template
+
+Path:
+
+```text
+resources/com/younghadiz/templates/deployment.yaml.template
+```
+
+Complete file:
+
+```yaml
+# Reference Kubernetes deployment template.
+#
+# Application repositories should normally maintain their own
+# Kubernetes manifests.
+#
+# This file is provided as a reusable reference for future projects
+# that choose to load templates from the Jenkins Shared Library.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+    spec:
+      containers:
+        - name: ${APP_NAME}
+          image: ${IMAGE_NAME}:${IMAGE_TAG}
+          ports:
+            - containerPort: 8080
+```
+
+The current pipeline does **not** automatically use this resource.
+
+The application repository owns its deployment manifests.
+
+---
+
+# 9.31 Shared Library Test Placeholder
+
+Path:
+
+```text
+test/README.md
+```
+
+Complete file:
+
+```markdown
+# Shared Library Tests
+
+Automated tests for the Jenkins Shared Library are not implemented yet.
+
+The current library is intentionally kept at the scope required for the DevOps training projects.
+
+A future improvement can introduce Jenkins Pipeline Unit or another suitable Groovy/Jenkins testing framework to validate shared-library functions independently from a Jenkins controller.
+```
+
+---
+
+# 9.32 Verify the Shared Library Structure
+
+Run:
+
+```bash
+find . \
+  -path './.git' -prune -o \
+  -type f -print | sort
+```
+
+Expected important structure:
+
+```text
+./.gitignore
+./README.md
+./resources/com/younghadiz/templates/deployment.yaml.template
+./src/com/younghadiz/devops/AwsUtils.groovy
+./src/com/younghadiz/devops/DockerUtils.groovy
+./src/com/younghadiz/devops/KubernetesUtils.groovy
+./src/com/younghadiz/devops/PipelineConfig.groovy
+./test/README.md
+./vars/buildDockerImage.groovy
+./vars/buildMaven.groovy
+./vars/commitVersion.groovy
+./vars/deployToEks.groovy
+./vars/incrementVersion.groovy
+./vars/multiServicePipeline.groovy
+./vars/pushToDockerHub.groovy
+./vars/pushToEcr.groovy
+./vars/singleServicePipeline.groovy
+```
+
+Check for legacy API references:
+
+```bash
+grep -R \
+  --exclude-dir=.git \
+  --exclude=README.md \
+  -nE \
+  'buildJar\(|buildImage\(|import com\.younghadiz\.devops\.Docker$|new Docker\(' \
+  vars src resources test \
+  || echo "No legacy API references found."
+```
+
+The historical check returned only legitimate references inside the new Docker implementation rather than the old API.
+
+---
+
+# 9.33 Commit the Shared Library Restructure
+
+Inspect:
+
+```bash
+git status
+git diff --stat
+git diff
+```
+
+Stage the intended restructure.
+
+Then:
+
+```bash
+git commit \
+  -m "refactor: restructure Jenkins shared library"
+```
+
+Verified historical feature commit:
+
+```text
+f881dba
+```
+
+Merge to `master` using a non-fast-forward merge.
+
+Verified historical merge:
+
+```text
+4e922ff merge: restructure Jenkins shared library
+```
+
+Push both remotes.
+
+---
+
+# 9.34 Return to the Application Repository
+
+LOCAL:
+
+```bash
+cd /Users/younghadiz/Documents/tech-workspace/devops-capstone-projects/complete-jenkins-cicd-pipeline-eks-ecr
+```
+
+Verify:
+
+```bash
+pwd
+
+git status
+
+git branch --show-current
+
+git remote -v
+```
+
+---
+
+# 9.35 Pipeline Preparation Feature Branch
+
+The verified branch was:
+
+```text
+feature/prepare-jenkins-pipeline
+```
+
+Create from `develop`:
+
+```bash
+git switch -c feature/prepare-jenkins-pipeline
+```
+
+---
+
+# 9.36 Application Kubernetes Directory
+
+Create:
+
+```bash
+mkdir -p kubernetes
+```
+
+Application-specific Kubernetes manifests stay in the application repository:
+
+```text
+kubernetes/
+├── deployment.yaml
+└── service.yaml
+```
+
+This allows application and deployment changes to be versioned together.
+
+---
+
+# 9.37 Kubernetes Deployment Manifest
+
+Path:
+
+```text
+kubernetes/deployment.yaml
+```
+
+Complete verified file:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: ${APP_NAME}
+
+spec:
+  replicas: 1
+
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+
+    spec:
+      containers:
+        - name: ${APP_NAME}
+          image: ${IMAGE_NAME}:${IMAGE_TAG}
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 8080
+```
+
+The variables:
+
+```text
+${APP_NAME}
+${IMAGE_NAME}
+${IMAGE_TAG}
+```
+
+are replaced at deployment time using:
+
+```text
+envsubst
+```
+
+This keeps environment-specific image values out of the committed Kubernetes file.
+
+---
+
+# 9.38 Kubernetes Service Manifest
+
+Path:
+
+```text
+kubernetes/service.yaml
+```
+
+Complete verified file:
+
+```yaml
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: ${APP_NAME}
+
+spec:
+  selector:
+    app: ${APP_NAME}
+
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+  type: LoadBalancer
+```
+
+Traffic mapping:
+
+```text
+AWS load balancer
+        │
+        ▼
+Kubernetes Service port 80
+        │
+        ▼
+targetPort 8080
+        │
+        ▼
+Spring Boot container
+```
+
+The `LoadBalancer` resource is only prepared here.
+
+It does **not** create a real AWS load balancer until the manifest is later applied to EKS.
+
+---
+
+# 9.39 Kubernetes Manifest Local Validation
+
+Because the variables are intentionally unresolved, create temporary values only for validation.
+
+Example:
+
+```bash
+export APP_NAME=java-maven-app
+export IMAGE_NAME=example.invalid/java-maven-app
+export IMAGE_TAG=local-validation
+```
+
+Render:
+
+```bash
+envsubst < kubernetes/deployment.yaml
+
+envsubst < kubernetes/service.yaml
+```
+
+Inspect that the output contains:
+
+```text
+java-maven-app
+example.invalid/java-maven-app:local-validation
+```
+
+Do not apply the manifests to a cluster during this phase.
+
+The objective is local/static preparation only.
+
+---
+
+# 9.40 Application Jenkinsfile Design
+
+The application repository deliberately keeps its Jenkinsfile small.
+
+The shared library provides the pipeline implementation.
+
+Final structure:
+
+```groovy
+@Library('jenkins-shared-library') _
+
+singleServicePipeline(
+    ...
+)
+```
+
+Nana's training showed that:
+
+```text
+@Library('jenkins-shared-library') _
+```
+
+loads a Jenkins Shared Library registered through Jenkins Global Pipeline Libraries.
+
+The underscore separates the annotation from the pipeline code when no direct import or variable follows it.
+
+---
+
+# 9.41 Reproducible Pre-Cloud Jenkinsfile
+
+At Pipeline Preparation time, cloud-specific values may not exist yet.
+
+Use safe placeholders:
+
+```groovy
+@Library('jenkins-shared-library') _
+
+singleServicePipeline(
+    appName: 'java-maven-app',
+
+    appDir: '.',
+
+    manifestDir: 'kubernetes',
+
+    registryType: 'ecr',
+
+    imageName: '<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/java-maven-app',
+
+    awsRegion: '<AWS_REGION>',
+
+    ecrRegistryServer: '<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com',
+
+    ecrCredentialsId: 'aws_ecr_creds',
+
+    gitCredentialsId: 'github-token',
+
+    repositoryUrl: 'https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git',
+
+    namespace: 'default'
+)
+```
+
+This is the **reproducible local-preparation version**.
+
+The actual verified AWS account/region values were inserted later during AWS configuration.
+
+Do not put AWS secret keys in this file.
+
+---
+
+# 9.42 Final Verified Jenkinsfile
+
+After cloud configuration, the final project file became:
+
+```groovy
+@Library('jenkins-shared-library') _
+
+singleServicePipeline(
+    appName: 'java-maven-app',
+
+    appDir: '.',
+
+    manifestDir: 'kubernetes',
+
+    registryType: 'ecr',
+
+    imageName: '002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app',
+
+    awsRegion: 'ca-central-1',
+
+    ecrRegistryServer: '002184382122.dkr.ecr.ca-central-1.amazonaws.com',
+
+    ecrCredentialsId: 'aws_ecr_creds',
+
+    gitCredentialsId: 'github-token',
+
+    repositoryUrl: 'https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git',
+
+    namespace: 'default'
+)
+```
+
+The AWS account ID is a resource identifier rather than a secret.
+
+For a reusable copy, replace it with:
+
+```text
+<AWS_ACCOUNT_ID>
+```
+
+---
+
+# 9.43 Pipeline Flow
+
+The application Jenkinsfile delegates to:
+
+```text
+singleServicePipeline()
+```
+
+which performs:
+
+```text
+Increment Version
+        ↓
+Build Application
+        ↓
+Build Docker Image
+        ↓
+Push Docker Image
+        ↓
+Deploy
+        ↓
+Commit Version Update
+```
+
+This matches Nana's learning progression while making the Jenkinsfile easier to read.
+
+---
+
+# 9.44 Jenkins Tool Name
+
+The shared library uses:
+
+```groovy
+tools {
+    maven 'Maven'
+}
+```
+
+Therefore Jenkins must later have a Maven installation configured with exactly:
+
+```text
+Maven
+```
+
+The Jenkins UI setup itself belongs to the later server/cloud provisioning phase.
+
+---
+
+# 9.45 Pipeline Credential References
+
+The application Jenkinsfile uses credential IDs only:
+
+```text
+aws_ecr_creds
+github-token
+```
+
+No secret values belong in Git.
+
+These credentials are created/configured later in Jenkins.
+
+---
+
+# 9.46 Commit Pipeline Preparation
+
+Inspect:
+
+```bash
+git status
+
+git diff -- Jenkinsfile
+
+git diff -- kubernetes/deployment.yaml
+
+git diff -- kubernetes/service.yaml
+```
+
+Stage:
+
+```bash
+git add \
+  Jenkinsfile \
+  kubernetes/deployment.yaml \
+  kubernetes/service.yaml
+```
+
+Verify:
+
+```bash
+git diff --cached
+```
+
+Commit:
+
+```bash
+git commit \
+  -m "ci: prepare Jenkins pipeline and Kubernetes deployment"
+```
+
+Verified historical feature commit:
+
+```text
+b6185a1
+```
+
+---
+
+# 9.47 Push Feature Branch
+
+GitHub primary:
+
+```bash
+git push -u \
+  github \
+  feature/prepare-jenkins-pipeline
+```
+
+GitLab secondary:
+
+```bash
+git push \
+  gitlab \
+  feature/prepare-jenkins-pipeline
+```
+
+---
+
+# 9.48 Merge to `develop`
+
+Before switching:
+
+```bash
+git status
+git branch --show-current
+git remote -v
+```
+
+Switch:
+
+```bash
+git switch develop
+```
+
+Merge:
+
+```bash
+git merge --no-ff \
+  feature/prepare-jenkins-pipeline \
+  -m "merge: prepare Jenkins pipeline and Kubernetes deployment"
+```
+
+Verified historical merge:
+
+```text
+809a44f
+```
+
+Push:
+
+```bash
+git push github develop
+git push gitlab develop
+```
+
+---
+
+# 9.49 Phase 9 Historical Git Position
+
+At this point the application history contained:
+
+```text
+809a44f merge: prepare Jenkins pipeline and Kubernetes deployment
+|
+| b6185a1 ci: prepare Jenkins pipeline and Kubernetes deployment
+|
+35cfa89 merge: add application containerization
+```
+
+ECR-specific configuration was added later:
+
+```text
+86a5f33 ci: configure AWS ECR deployment
+```
+
+and merged as:
+
+```text
+e217b83 merge: configure AWS ECR deployment
+```
+
+Do not incorrectly describe `86a5f33` as part of the initial pipeline-preparation commit.
+
+---
+
+# 9.50 Phase 9 Part 1 Security Review
+
+Prepared locally:
+
+```text
+Jenkinsfile
+Kubernetes manifests
+shared-library code
+credential IDs
+Git commit identity
+```
+
+Not committed:
+
+```text
+AWS secret access key
+GitHub token
+GitLab token
+kubeconfig
+private SSH keys
+Jenkins passwords
+Docker passwords
+```
+
+---
+
+# 9.51 Cost
+
+Pipeline preparation itself:
+
+```text
+AWS infrastructure cost: none
+ECR storage cost: none
+EKS cost: none
+load balancer cost: none
+```
+
+Jenkins may already exist from training, but no new cloud provisioning is required simply to prepare these files.
+
+---
+
+# 9.52 Phase 9 Part 1 Verification Checklist
+
+```text
+[ ] shared-library repository inspected
+[ ] feature/restructure-shared-library created
+[ ] legacy buildJar/buildImage/Docker files removed
+[ ] PipelineConfig created
+[ ] DockerUtils created
+[ ] AwsUtils created
+[ ] KubernetesUtils created
+[ ] buildMaven created
+[ ] buildDockerImage created
+[ ] pushToDockerHub created
+[ ] pushToEcr created
+[ ] deployToEks created
+[ ] incrementVersion created
+[ ] commitVersion created
+[ ] singleServicePipeline created
+[ ] multiServicePipeline placeholder created
+[ ] Kubernetes reference template created
+[ ] test README created
+[ ] shared-library restructure committed
+[ ] commit f881dba represented restructure
+[ ] merge 4e922ff represented integration
+[ ] application feature/prepare-jenkins-pipeline created
+[ ] Jenkinsfile prepared
+[ ] deployment.yaml prepared
+[ ] service.yaml prepared
+[ ] manifests rendered locally with envsubst
+[ ] no cloud apply performed
+[ ] b6185a1 represented pipeline preparation
+[ ] 809a44f represented merge to develop
+[ ] GitHub synchronized
+[ ] GitLab synchronized
+[ ] no secrets committed
+```
+
+---
+
+## Phase 9 continuation
+
+Phase 9 is not complete yet.
 
 ---
 
