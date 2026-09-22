@@ -24426,7 +24426,541 @@ Git/runtime reconciliation documented
 
 # 18. Documentation
 
-To be documented during final consolidation.
+## 18.1 Objective
+
+Convert the completed technical implementation and verified project history into a documentation set that can serve two different purposes:
+
+```text
+README.md
+→ concise portfolio/project overview
+
+RUNBOOK.md
+→ complete rebuild and operations manual
+
+docs/architecture.md
+→ architecture and component relationships
+
+docs/troubleshooting.md
+→ real failures, causes and fixes
+
+docs/verification-evidence.md
+→ evidence and commands proving the project worked
+
+docs/future-improvements.md
+→ production improvements intentionally not implemented
+```
+
+The documentation must remain consistent with the verified project.
+
+It must not invent technologies, infrastructure or controls that were not actually implemented.
+
+---
+
+## 18.2 Documentation Principle
+
+The project uses a layered documentation model.
+
+```text
+README
+   │
+   ├── what the project is
+   ├── technology stack
+   ├── architecture summary
+   ├── pipeline summary
+   └── links to detailed documents
+          │
+          ▼
+RUNBOOK
+   │
+   └── complete step-by-step rebuild procedure
+          │
+          ├── architecture.md
+          ├── troubleshooting.md
+          ├── verification-evidence.md
+          └── future-improvements.md
+```
+
+The README must not become another copy of the runbook.
+
+The supplemental documents must not remove important implementation detail from the runbook.
+
+`RUNBOOK.md` remains the authoritative technical rebuild manual.
+
+---
+
+## 18.3 Documentation Files
+
+Final target structure:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr/
+├── README.md
+├── RUNBOOK.md
+│
+├── docs/
+│   ├── architecture.md
+│   ├── troubleshooting.md
+│   ├── verification-evidence.md
+│   └── future-improvements.md
+│
+├── Jenkinsfile
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── pom.xml
+│
+├── kubernetes/
+│   ├── deployment.yaml
+│   └── service.yaml
+│
+└── src/
+    ├── main/
+    │   ├── java/com/example/Application.java
+    │   └── resources/static/index.html
+    │
+    └── test/
+        └── java/com/example/ApplicationTest.java
+```
+
+---
+
+## 18.4 Inspect Existing Documentation First
+
+Before replacing an existing file:
+
+```bash
+cat README.md
+```
+
+Inspect current runbook:
+
+```bash
+grep -nE '^# (1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20)\.' \
+  RUNBOOK.md
+```
+
+Inspect any existing documentation directory:
+
+```bash
+find docs \
+  -maxdepth 2 \
+  -type f \
+  -print 2>/dev/null \
+  | sort
+```
+
+This follows the project rule:
+
+```text
+inspect existing file
+→ understand current state
+→ modify intentionally
+```
+
+---
+
+## 18.5 Why the README Must Be Replaced
+
+The earlier README was created while the project was still being built incrementally.
+
+It contained a project-status section similar to:
+
+```text
+Phase 1 — Requirements: Complete
+Phase 2 — Repository Setup: In progress
+```
+
+That information became obsolete after the project completed:
+
+```text
+local build
+tests
+artifact creation
+containerization
+Jenkins pipeline
+ECR
+EKS
+deployment
+networking
+monitoring
+end-to-end verification
+rollback
+```
+
+The earlier README also contained a Markdown code-fence formatting problem around the attribution/project information.
+
+Therefore Phase 18 replaces the README with the final portfolio-oriented version.
+
+---
+
+## 18.6 README Responsibility
+
+The final `README.md` should answer:
+
+```text
+What is this project?
+
+What application is being deployed?
+
+What work was supplied by TechWorld with Nana?
+
+What work was implemented independently?
+
+What technologies are used?
+
+How does the CI/CD pipeline work?
+
+What AWS/Kubernetes architecture was verified?
+
+How can the application be built locally?
+
+Where is the complete implementation runbook?
+
+What is the current project status?
+
+What are the important security and production limitations?
+```
+
+It should not include every installation command.
+
+Those commands belong in:
+
+```text
+RUNBOOK.md
+```
+
+---
+
+## 18.7 Attribution Requirement
+
+The baseline application must remain correctly attributed to:
+
+```text
+TechWorld with Nana DevOps Bootcamp
+```
+
+Original application:
+
+```text
+https://gitlab.com/twn-devops-bootcamp/latest/08-jenkins/java-maven-app
+```
+
+Starting branch:
+
+```text
+starting-code
+```
+
+Verified upstream baseline commit:
+
+```text
+f2a092e5375f015993151d078df7dc5dc0deae79
+```
+
+The repository must clearly distinguish:
+
+```text
+supplied Java Maven application
+```
+
+from:
+
+```text
+independently implemented DevOps engineering work
+```
+
+---
+
+## 18.8 Independent DevOps Work
+
+Independent work documented by this repository includes:
+
+```text
+repository strategy
+GitHub/GitLab synchronization
+Git workflow
+automated test addition
+Maven build verification
+artifact validation
+Docker containerization
+local container testing
+Jenkins Shared Library restructuring
+Jenkins Multibranch Pipeline
+version automation
+Git commit-back
+recursive-build prevention
+Amazon ECR
+Amazon EKS
+Kubernetes Deployment
+Kubernetes LoadBalancer Service
+AWS Classic ELB networking
+security configuration
+monitoring
+end-to-end validation
+real troubleshooting
+rollback
+documentation
+release procedure
+cleanup procedure
+```
+
+---
+
+## 18.9 Create Documentation Directory
+
+Run:
+
+```bash
+mkdir -p docs
+```
+
+Verify:
+
+```bash
+ls -ld docs
+```
+
+---
+
+# README Documentation
+
+## 18.10 Replace `README.md`
+
+Path:
+
+```text
+README.md
+```
+
+Use the complete final README supplied in this documentation batch.
+
+After editing:
+
+```bash
+git diff -- README.md
+```
+
+Then:
+
+```bash
+git diff --check
+```
+
+Do not commit yet if the architecture document is being added in the same focused documentation batch.
+
+---
+
+# Architecture Documentation
+
+## 18.11 Create `docs/architecture.md`
+
+Path:
+
+```text
+docs/architecture.md
+```
+
+This file documents the verified relationships between:
+
+```text
+Developer
+GitHub
+GitLab
+Jenkins
+Jenkins Shared Library
+Maven
+Docker
+Amazon ECR
+Amazon EKS
+Kubernetes Deployment
+Pod
+Service
+Classic ELB
+Internet user
+```
+
+It must distinguish:
+
+```text
+verified current architecture
+```
+
+from:
+
+```text
+future production architecture
+```
+
+---
+
+## 18.12 Verified High-Level Architecture
+
+The verified architecture is:
+
+```text
+Developer
+    │
+    │ git push
+    ▼
+GitHub
+    │
+    │ webhook / Multibranch discovery
+    ▼
+Jenkins on DigitalOcean
+    │
+    │ loads
+    ▼
+Jenkins Shared Library
+    │
+    ├── increment Maven version
+    ├── Maven build
+    ├── automated tests
+    ├── Docker build
+    ├── ECR push
+    ├── EKS deployment
+    └── Git version commit-back
+            │
+            ├───────────────► GitHub develop
+            │
+            ▼
+        Amazon ECR
+            │
+            ▼
+        Amazon EKS
+            │
+            ▼
+   Kubernetes Deployment
+            │
+            ▼
+           Pod
+            │
+            ▼
+ LoadBalancer Service
+            │
+            ▼
+   AWS Classic ELB
+            │
+            ▼
+       Internet user
+```
+
+GitLab remains the synchronized secondary repository.
+
+---
+
+## 18.13 CI/CD Execution Architecture
+
+```text
+Git commit
+   │
+   ▼
+Jenkins Multibranch Pipeline
+   │
+   ▼
+@Library('jenkins-shared-library')
+   │
+   ▼
+singleServicePipeline()
+   │
+   ├── Increment Version
+   ├── Build Application
+   ├── Build Docker Image
+   ├── Push Docker Image
+   ├── Deploy
+   └── Commit Version Update
+```
+
+---
+
+## 18.14 Verified Deployment Architecture
+
+```text
+ECR
+java-maven-app:1.1.1-2
+        │
+        ▼
+EKS
+java-maven-eks
+        │
+        ▼
+Deployment
+java-maven-app
+        │
+        ▼
+Pod
+        │
+        ▼
+Service
+type: LoadBalancer
+port: 80
+targetPort: 8080
+        │
+        ▼
+NodePort
+30321
+        │
+        ▼
+Classic ELB
+        │
+        ▼
+Internet
+```
+
+---
+
+## 18.15 Architecture Documentation Rule
+
+Do not add technologies such as:
+
+```text
+Terraform
+Helm
+Argo CD
+ALB Ingress Controller
+Prometheus
+Grafana
+Route 53
+ACM
+service mesh
+```
+
+to the current architecture diagram.
+
+Those technologies were not part of the verified implementation.
+
+They belong only in:
+
+```text
+docs/future-improvements.md
+```
+
+---
+
+## 18.16 Documentation Status After Part 1
+
+After this batch:
+
+```text
+README.md
+✅ final content prepared
+
+docs/architecture.md
+✅ final content prepared
+
+docs/troubleshooting.md
+⬜ Part 2
+
+docs/verification-evidence.md
+⬜ Part 2
+
+docs/future-improvements.md
+⬜ Part 2
+
+RUNBOOK Phase 18
+🟡 Part 1 complete
+```
+
+Phase 18 remains incomplete until all documentation files and documentation verification are finished.
 
 ---
 
