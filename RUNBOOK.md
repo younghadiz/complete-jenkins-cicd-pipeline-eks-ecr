@@ -6863,7 +6863,1859 @@ Jenkins may already exist from training, but no new cloud provisioning is requir
 
 ## Phase 9 continuation
 
-Phase 9 is not complete yet.
+## 9.53 Jenkins-Side Preparation
+
+The application and shared-library files can be prepared locally, but Jenkins must also be configured to understand and execute them.
+
+The Jenkins-side preparation required by this project is:
+
+```text
+configure Maven tool
+→ configure GitHub credential
+→ configure AWS credential reference
+→ register Jenkins Shared Library
+→ install Ignore Committer Strategy plugin
+→ create Multibranch Pipeline
+→ configure branch source
+→ configure branch discovery
+→ configure Ignore Committer Strategy
+→ configure repository webhook
+→ scan repository
+→ verify Jenkinsfile discovery
+→ verify shared-library loading
+```
+
+This section documents configuration only.
+
+Actual cloud deployment belongs to later phases.
+
+---
+
+## 9.54 Jenkins Administrator vs Pipeline Configuration
+
+Nana's Jenkins training separates Jenkins administration from pipeline use.
+
+Jenkins administration includes:
+
+```text
+plugins
+credentials
+tools
+global shared libraries
+security
+nodes / agents
+system settings
+```
+
+Pipeline configuration includes:
+
+```text
+job creation
+repository configuration
+branch discovery
+Jenkinsfile execution
+build triggers
+CI/CD workflow
+```
+
+In a small learning environment the same DevOps Engineer may perform both roles.
+
+---
+
+## 9.55 Required Jenkins Capabilities
+
+For this project, Jenkins needs access to:
+
+```text
+Git
+Java
+Maven
+Docker
+AWS CLI
+kubectl
+envsubst
+GitHub
+Amazon ECR
+Amazon EKS
+```
+
+Some of these are configured through Jenkins itself.
+
+Others must exist in the Jenkins runtime/container and are documented later under:
+
+```text
+Phase 12 — Server and Cloud Provisioning
+```
+
+Do not install cloud tooling merely because the Jenkinsfile already references it.
+
+The files are prepared first.
+
+The runtime is provisioned later.
+
+---
+
+## 9.56 Configure Maven in Jenkins
+
+Nana's training path was:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Global Tool Configuration
+→ Maven
+→ Add Maven
+```
+
+On Jenkins versions where the UI has been reorganized, the equivalent may appear under:
+
+```text
+Manage Jenkins
+→ Tools
+```
+
+The important requirement is the configured Maven installation name.
+
+The current shared library contains:
+
+```groovy
+tools {
+    maven 'Maven'
+}
+```
+
+Therefore the Jenkins Maven installation must be named exactly:
+
+```text
+Maven
+```
+
+Do not configure it as:
+
+```text
+Maven3.9
+Maven-3.9
+Apache Maven
+```
+
+unless the shared-library code is changed to match.
+
+Recommended learning setup:
+
+```text
+Name:
+Maven
+
+Install automatically:
+Enabled
+
+Version:
+A Jenkins-supported Maven 3.x release
+```
+
+The exact Maven patch version is not an assignment requirement.
+
+The configured name is critical because Jenkins resolves the tool by name.
+
+---
+
+## 9.57 Why Tool Names Must Match
+
+This shared-library code:
+
+```groovy
+tools {
+    maven 'Maven'
+}
+```
+
+means:
+
+```text
+look in Jenkins configured tools
+→ locate Maven installation called "Maven"
+→ place that Maven installation in the pipeline environment
+```
+
+If Jenkins instead contains:
+
+```text
+Maven3.9
+```
+
+the pipeline may fail to resolve:
+
+```text
+Maven
+```
+
+even though Maven itself is installed.
+
+---
+
+## 9.58 Verify Maven Configuration
+
+After saving the Maven tool, the eventual Jenkins pipeline should contain a Declarative stage similar to:
+
+```text
+Declarative: Tool Install
+```
+
+A successful pipeline later confirmed that Jenkins resolved the Maven tool and executed:
+
+```bash
+mvn build-helper:parse-version ...
+```
+
+and:
+
+```bash
+mvn clean package
+```
+
+successfully.
+
+The successful build produced:
+
+```text
+Application version:
+1.1.1
+```
+
+and then built:
+
+```text
+java-maven-app-1.1.1.jar
+```
+
+---
+
+## 9.59 Configure Jenkins Credentials
+
+Training path:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Credentials
+→ System
+→ Global credentials
+```
+
+Do not place credential values into:
+
+```text
+Jenkinsfile
+shared-library source
+README
+RUNBOOK
+GitHub
+GitLab
+screenshots
+terminal history
+```
+
+Only credential IDs belong in source code.
+
+---
+
+## 9.60 GitHub Credential
+
+The application repository uses:
+
+```text
+github-token
+```
+
+Purpose:
+
+```text
+checkout application source
+push Jenkins-generated Maven version commit
+```
+
+Recommended credential representation for this Nana-aligned implementation:
+
+```text
+Kind:
+Username with password
+
+ID:
+github-token
+
+Username:
+<GITHUB_USERNAME>
+
+Password:
+<GITHUB_PERSONAL_ACCESS_TOKEN>
+```
+
+For this project:
+
+```text
+Username:
+younghadiz
+```
+
+Do not document the actual token.
+
+The token must have sufficient repository permissions for the operations Jenkins performs.
+
+At minimum Jenkins requires the ability to:
+
+```text
+read repository contents
+checkout branches
+push updated pom.xml to the branch
+```
+
+---
+
+## 9.61 Verified Application Checkout Credential
+
+The successful capstone Jenkins console later showed:
+
+```text
+using credential github-token
+```
+
+while fetching:
+
+```text
+https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git
+```
+
+This confirms that the Multibranch application source used the intended Jenkins credential.
+
+---
+
+## 9.62 AWS Credential Reference
+
+The current shared library expects:
+
+```text
+aws_ecr_creds
+```
+
+with the Nana-aligned Jenkins credential representation:
+
+```text
+Kind:
+Username with password
+
+ID:
+aws_ecr_creds
+
+Username:
+AWS Access Key ID
+
+Password:
+AWS Secret Access Key
+```
+
+The shared library maps those fields to:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+```
+
+Example from the library:
+
+```groovy
+usernamePassword(
+    credentialsId: credentialsId,
+    usernameVariable: 'AWS_ACCESS_KEY_ID',
+    passwordVariable: 'AWS_SECRET_ACCESS_KEY'
+)
+```
+
+Never replace the credential ID in source code with actual AWS keys.
+
+The IAM identity and its permissions are documented under:
+
+```text
+Phase 11 — Security Configuration
+```
+
+---
+
+## 9.63 Docker Hub Credential
+
+The reusable shared library also supports:
+
+```text
+dockerhub-creds
+```
+
+Expected type:
+
+```text
+Kind:
+Username with password
+
+ID:
+dockerhub-creds
+```
+
+This credential is not required for the current ECR deployment path.
+
+It exists so the shared library remains reusable for projects using Docker Hub.
+
+---
+
+## 9.64 Credential Scope Principle
+
+Use this rule:
+
+```text
+source code
+→ credential ID only
+
+Jenkins credential store
+→ actual secret
+```
+
+Example:
+
+```groovy
+ecrCredentialsId: 'aws_ecr_creds'
+```
+
+is safe to commit.
+
+This is not:
+
+```groovy
+awsSecretAccessKey: 'actual-secret-value'
+```
+
+---
+
+## 9.65 Register the Jenkins Shared Library
+
+Nana's training path:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ System
+→ Global Pipeline Libraries
+→ Add
+```
+
+Configure:
+
+```text
+Name:
+jenkins-shared-library
+```
+
+This name must match:
+
+```groovy
+@Library('jenkins-shared-library') _
+```
+
+in the application Jenkinsfile.
+
+---
+
+## 9.66 Shared Library Default Version
+
+For the learning implementation:
+
+```text
+Default Version:
+master
+```
+
+The project currently uses:
+
+```groovy
+@Library('jenkins-shared-library') _
+```
+
+without an explicit version.
+
+Jenkins therefore uses the default version configured in Global Pipeline Libraries.
+
+Verified successful pipeline behavior later showed:
+
+```text
+Loading library jenkins-shared-library@master
+```
+
+---
+
+## 9.67 Shared Library Retrieval Method
+
+Choose:
+
+```text
+Retrieval method:
+Modern SCM
+```
+
+Then:
+
+```text
+SCM:
+Git
+```
+
+Repository:
+
+```text
+https://github.com/younghadiz/jenkins-shared-library.git
+```
+
+The repository is public.
+
+The verified successful capstone library checkout showed:
+
+```text
+No credentials specified
+```
+
+for the shared-library repository.
+
+Therefore credentials are not required merely to read this public shared library.
+
+This is different from the private/authenticated application checkout, which used:
+
+```text
+github-token
+```
+
+---
+
+## 9.68 Global Library Configuration Summary
+
+Reproducible configuration:
+
+```text
+Name:
+jenkins-shared-library
+
+Default version:
+master
+
+Load implicitly:
+No
+
+Allow default version to be overridden:
+Yes / acceptable for learning and troubleshooting
+
+Retrieval:
+Modern SCM
+
+SCM:
+Git
+
+Repository:
+https://github.com/younghadiz/jenkins-shared-library.git
+
+Credentials:
+None required while repository remains public
+```
+
+If the shared-library repository becomes private, configure an appropriate GitHub credential.
+
+---
+
+## 9.69 Shared Library Version Override
+
+The global configuration may define:
+
+```text
+master
+```
+
+but a Jenkinsfile can explicitly request another version:
+
+```groovy
+@Library('jenkins-shared-library@v1.0.0') _
+```
+
+or temporarily:
+
+```groovy
+@Library('jenkins-shared-library@fix/eks-deployment-aws-credentials') _
+```
+
+The capstone later used this behavior to test the EKS credential fix without merging the fix immediately.
+
+This allowed the application test branch to load:
+
+```text
+fix/eks-deployment-aws-credentials
+```
+
+while normal pipelines continued using:
+
+```text
+master
+```
+
+---
+
+## 9.70 Production Shared-Library Versioning Improvement
+
+Using:
+
+```text
+master
+```
+
+is easy for training but means a change to the shared-library master branch can affect every pipeline using the default version.
+
+A more controlled production pattern is:
+
+```text
+v1.0.0
+v1.1.0
+v2.0.0
+```
+
+Then:
+
+```groovy
+@Library('jenkins-shared-library@v1.0.0') _
+```
+
+provides a predictable pipeline dependency.
+
+This is a future production improvement.
+
+Do not silently replace the verified capstone's `master` behavior.
+
+---
+
+## 9.71 Create the Multibranch Pipeline
+
+Nana's sequence:
+
+```text
+Jenkins
+→ New Item
+→ Multibranch Pipeline
+```
+
+For a reproducible project, use a clear name such as:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr
+```
+
+The exact Jenkins display name is less important than using one Multibranch Pipeline for this application repository.
+
+---
+
+## 9.72 Why Multibranch Pipeline Is Used
+
+The Git workflow contains:
+
+```text
+main
+develop
+feature/*
+bugfix/*
+hotfix/*
+docs/*
+```
+
+A Multibranch Pipeline allows Jenkins to:
+
+```text
+scan repository
+→ discover branches
+→ look for Jenkinsfile
+→ create branch-specific Jenkins jobs
+```
+
+This avoids manually creating a separate Jenkins job for every branch.
+
+---
+
+## 9.73 Configure the Branch Source
+
+Inside the Multibranch job:
+
+```text
+Configure
+→ Branch Sources
+→ Add source
+```
+
+Use Git/GitHub according to the installed Jenkins branch-source plugin.
+
+Repository:
+
+```text
+https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git
+```
+
+Credential:
+
+```text
+github-token
+```
+
+The successful Jenkins execution later confirmed this repository was fetched using `github-token`.
+
+---
+
+## 9.74 Discover Branches
+
+Configure branch discovery so Jenkins can see the project branches.
+
+Nana's training used the concept:
+
+```text
+Discover branches
+→ all branches
+```
+
+or a branch-name filter matching:
+
+```text
+.*
+```
+
+The goal is:
+
+```text
+main
+develop
+feature/add-application-test
+feature/containerize-application
+feature/prepare-jenkins-pipeline
+feature/configure-aws-deployment
+bugfix/...
+```
+
+can be discovered when they contain a Jenkinsfile.
+
+The verified Jenkins scan later reported seven remote branches during the capstone test.
+
+---
+
+## 9.75 Script Path
+
+Set:
+
+```text
+Script Path:
+Jenkinsfile
+```
+
+The application repository keeps the Jenkinsfile at the repository root:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr/Jenkinsfile
+```
+
+Do not use a different script path unless the file is actually moved.
+
+---
+
+## 9.76 What Happens During Multibranch Scan
+
+Jenkins performs:
+
+```text
+connect to GitHub
+→ inspect branches
+→ find Jenkinsfile
+→ create/update branch jobs
+```
+
+For example:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr
+├── develop
+├── main
+├── feature/configure-aws-deployment
+└── bugfix/verify-eks-deployment-credentials
+```
+
+Jenkins workspaces may sanitize or shorten job/branch names.
+
+Do not depend on the workspace directory name as a permanent API.
+
+---
+
+## 9.77 Verified Branch Discovery
+
+During the final capstone validation Jenkins reported branches including:
+
+```text
+bugfix/verify-eks-deployment-credentials
+develop
+feature/add-application-test
+feature/configure-aws-deployment
+feature/containerize-application
+feature/prepare-jenkins-pipeline
+main
+```
+
+and reported:
+
+```text
+Seen 7 remote branches
+```
+
+This confirmed that Multibranch branch discovery was working.
+
+---
+
+## 9.78 Nana's Branch-Based Pipeline Lesson
+
+Nana's Multibranch lesson also teaches branch-specific behavior.
+
+Example:
+
+```groovy
+stage('Build') {
+    when {
+        branch 'master'
+    }
+
+    steps {
+        sh 'mvn package'
+    }
+}
+```
+
+The learning objective is:
+
+```text
+feature branch
+→ test only
+
+main/master
+→ test
+→ build
+→ deploy
+```
+
+This is an important production CI/CD pattern.
+
+---
+
+## 9.79 Current Capstone Branch Behavior
+
+The verified `singleServicePipeline.groovy` used by this capstone does **not** currently contain:
+
+```groovy
+when {
+    branch 'main'
+}
+```
+
+or equivalent deployment branch guards.
+
+Therefore do not document the current implementation as:
+
+```text
+feature branches only test
+main deploys
+```
+
+because that is not what the final shared-library file implements.
+
+Instead, current behavior is:
+
+```text
+Jenkins discovers a branch
+→ Jenkinsfile loads singleServicePipeline()
+→ all configured stages are available to run
+```
+
+The Multibranch job/build strategy determines which discovered branch events actually result in builds.
+
+---
+
+## 9.80 Future Branch Policy Improvement
+
+A later production enhancement could use:
+
+```groovy
+when {
+    branch 'main'
+}
+```
+
+for:
+
+```text
+Push Docker Image
+Deploy
+Commit Version Update
+```
+
+while allowing test/build validation on feature branches.
+
+Alternatively:
+
+```text
+develop
+→ integration deployment
+
+main
+→ release deployment
+```
+
+This is a future workflow decision.
+
+Do not silently add it to the historical capstone implementation.
+
+---
+
+## 9.81 Install Ignore Committer Strategy
+
+Nana's training solution for the Jenkins commit loop is the Jenkins plugin:
+
+```text
+Ignore Committer Strategy
+```
+
+Install:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Plugins
+→ Available plugins
+→ search "Ignore Committer Strategy"
+→ Install
+```
+
+Restart Jenkins only if the plugin installation process requires it.
+
+---
+
+## 9.82 Why Ignore Committer Strategy Is Required
+
+The pipeline contains:
+
+```text
+Increment Version
+...
+Commit Version Update
+```
+
+Jenkins changes:
+
+```text
+pom.xml
+```
+
+and pushes:
+
+```text
+ci: version bump
+```
+
+back to GitHub.
+
+Without protection:
+
+```text
+developer push
+→ Jenkins starts
+→ Jenkins pushes version commit
+→ repository event
+→ Jenkins starts again
+→ version changes again
+→ Jenkins pushes again
+→ infinite loop
+```
+
+---
+
+## 9.83 Jenkins Commit Identity
+
+The project deliberately uses:
+
+```text
+Name:
+jenkins
+
+Email:
+jenkins@example.com
+```
+
+The final shared-library call is:
+
+```groovy
+commitVersion(
+    appDir,
+    gitCredentialsId,
+    repositoryUrl,
+    env.BRANCH_NAME,
+    'ci: version bump',
+    'jenkins',
+    'jenkins@example.com'
+)
+```
+
+This gives the machine-generated commit a predictable identity.
+
+---
+
+## 9.84 Configure Ignore Committer Strategy
+
+Open:
+
+```text
+Jenkins
+→ <Multibranch Pipeline>
+→ Configure
+→ Branch Sources
+→ Build Strategies
+→ Add
+→ Ignore Committer Strategy
+```
+
+Ignored author/committer:
+
+```text
+jenkins@example.com
+```
+
+Enable the option equivalent to:
+
+```text
+Allow builds for all other authors
+```
+
+Save.
+
+---
+
+## 9.85 Expected Ignore-Committer Behavior
+
+Expected workflow:
+
+```text
+Gafari pushes developer commit
+        ↓
+GitHub event
+        ↓
+Jenkins runs pipeline
+        ↓
+Jenkins commits pom.xml
+        ↓
+GitHub receives Jenkins commit
+        ↓
+Jenkins evaluates committer
+        ↓
+jenkins@example.com matches ignore rule
+        ↓
+no recursive pipeline
+```
+
+Nana's training verified this behavior by confirming that the Jenkins-generated commit did not create another pipeline run.
+
+---
+
+## 9.86 Why This Is Preferred to Skipping Stages
+
+Another approach would be:
+
+```text
+pipeline starts
+→ checkout
+→ inspect author
+→ skip the stages
+```
+
+That still creates a build entry for every machine commit.
+
+Ignore Committer Strategy prevents the unwanted build from starting.
+
+For this learning project, this is cleaner.
+
+---
+
+## 9.87 Configure GitHub Webhook
+
+Repository side:
+
+```text
+GitHub
+→ complete-jenkins-cicd-pipeline-eks-ecr
+→ Settings
+→ Webhooks
+→ Add webhook
+```
+
+Learning/reproducible payload:
+
+```text
+http://<JENKINS_SERVER>:8080/github-webhook/
+```
+
+Content type:
+
+```text
+application/json
+```
+
+Event selection:
+
+```text
+Just the push event
+```
+
+Enable the webhook.
+
+Do not put Jenkins administrator credentials in the webhook URL.
+
+---
+
+## 9.88 Webhook Flow
+
+The intended behavior is:
+
+```text
+developer git push
+        ↓
+GitHub
+        ↓
+webhook
+        ↓
+Jenkins
+        ↓
+Multibranch branch indexing / event handling
+        ↓
+branch Jenkinsfile
+        ↓
+pipeline
+```
+
+This removes the need for a person to repeatedly click:
+
+```text
+Build Now
+```
+
+after every developer commit.
+
+---
+
+## 9.89 Training vs Current Git Provider
+
+Nana's original training examples often used GitLab.
+
+The underlying concept is the same:
+
+```text
+SCM receives push
+→ SCM notifies Jenkins
+→ Jenkins evaluates branch/job
+→ pipeline starts
+```
+
+This capstone uses:
+
+```text
+GitHub
+```
+
+as the primary Jenkins-connected repository.
+
+GitLab is the synchronized secondary repository.
+
+Do not configure two competing webhook sources for the same normal build flow unless that is intentional.
+
+---
+
+## 9.90 Webhook Security Note
+
+The simple training architecture may expose Jenkins through:
+
+```text
+http://<SERVER_IP>:8080
+```
+
+A production Jenkins webhook endpoint should instead normally use:
+
+```text
+HTTPS
+domain name
+reverse proxy or load balancer
+controlled firewall/security rules
+```
+
+This is a future production hardening improvement.
+
+The capstone remains intentionally close to Nana's basic learning setup.
+
+---
+
+## 9.91 Manual Repository Scan
+
+After saving the Multibranch configuration, Jenkins can be instructed to:
+
+```text
+Scan Multibranch Pipeline Now
+```
+
+The scan should:
+
+```text
+connect to GitHub
+discover branches
+find Jenkinsfile
+create branch jobs
+```
+
+This is useful before relying solely on automatic webhook events.
+
+---
+
+## 9.92 Verify Jenkinsfile Discovery
+
+The Jenkins branch-indexing or branch console output should include behavior equivalent to:
+
+```text
+Obtained Jenkinsfile from <commit>
+```
+
+If Jenkins says no Jenkinsfile exists:
+
+verify:
+
+```text
+repository URL
+branch
+Script Path
+Jenkinsfile committed
+Jenkinsfile pushed
+credential access
+```
+
+---
+
+## 9.93 Verify Shared Library Load
+
+Expected output:
+
+```text
+Loading library jenkins-shared-library@master
+```
+
+Then Jenkins should resolve the branch.
+
+The verified successful capstone run loaded:
+
+```text
+jenkins-shared-library@master
+```
+
+at shared-library commit:
+
+```text
+5bcdcbd9316227c545052ea94fbdc159b5b7ace0
+```
+
+at that point in the project's history.
+
+That commit represented:
+
+```text
+merge: fix EKS deployment AWS credentials
+```
+
+The exact SHA will naturally change after future library commits.
+
+---
+
+## 9.94 Verify Application Checkout
+
+Expected console behavior includes:
+
+```text
+using credential github-token
+```
+
+and:
+
+```text
+Fetching upstream changes from:
+https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git
+```
+
+A successful final build checked out the intended `develop` revision.
+
+---
+
+## 9.95 Jenkins Git Tool Warning
+
+The successful Jenkins console also displayed:
+
+```text
+Selected Git installation does not exist. Using Default
+The recommended git tool is: NONE
+```
+
+The pipeline still completed successfully because Git itself was available in the Jenkins runtime.
+
+Therefore this was:
+
+```text
+non-blocking in the verified project
+```
+
+but it indicates Jenkins Git-tool configuration could be cleaned up later.
+
+Future improvement:
+
+```text
+Manage Jenkins
+→ Tools
+→ configure a valid Git installation
+```
+
+or allow Jenkins to use the expected system Git configuration consistently.
+
+Do not treat this warning as evidence that the pipeline failed.
+
+---
+
+## 9.96 Shared Library Parameter Mapping
+
+The application Jenkinsfile provides:
+
+| Parameter           | Value in this project                                                | Purpose                          |
+| ------------------- | -------------------------------------------------------------------- | -------------------------------- |
+| `appName`           | `java-maven-app`                                                     | Application and Deployment name  |
+| `appDir`            | `.`                                                                  | Application root                 |
+| `manifestDir`       | `kubernetes`                                                         | Kubernetes manifests             |
+| `registryType`      | `ecr`                                                                | Container registry selection     |
+| `imageName`         | `<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app` | Complete ECR image repository    |
+| `awsRegion`         | `ca-central-1`                                                       | AWS region                       |
+| `ecrRegistryServer` | `<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com`                | ECR registry host                |
+| `ecrCredentialsId`  | `aws_ecr_creds`                                                      | Jenkins AWS credential reference |
+| `gitCredentialsId`  | `github-token`                                                       | Jenkins Git push credential      |
+| `repositoryUrl`     | GitHub capstone repository                                           | Version commit destination       |
+| `namespace`         | `default`                                                            | Kubernetes namespace             |
+
+The actual verified account ID can be inserted for the deployed project, but reusable copies of the runbook should use:
+
+```text
+<AWS_ACCOUNT_ID>
+```
+
+---
+
+## 9.97 Pipeline Environment Values Created at Runtime
+
+The shared pipeline creates:
+
+```text
+APP_VERSION
+IMAGE_TAG
+```
+
+Example:
+
+```text
+APP_VERSION=1.1.1
+
+BUILD_NUMBER=2
+
+IMAGE_TAG=1.1.1-2
+```
+
+This means the Docker tag is not hardcoded in the Jenkinsfile.
+
+---
+
+## 9.98 Expected Jenkins Pipeline Stages
+
+The shared-library pipeline exposes:
+
+```text
+Increment Version
+Build Application
+Build Docker Image
+Push Docker Image
+Deploy
+Commit Version Update
+```
+
+Jenkins also creates Declarative internal stages such as:
+
+```text
+Declarative: Checkout SCM
+Declarative: Tool Install
+Declarative: Post Actions
+```
+
+These internal stages are expected Jenkins behavior and are not additional project phases.
+
+---
+
+## 9.99 Pipeline Preparation Static Verification
+
+Before cloud deployment, verify the application repository:
+
+```bash
+pwd
+
+git status
+
+git branch --show-current
+
+cat Jenkinsfile
+
+cat kubernetes/deployment.yaml
+
+cat kubernetes/service.yaml
+```
+
+Verify placeholders:
+
+```bash
+grep -R \
+  -nE '\$\{APP_NAME\}|\$\{IMAGE_NAME\}|\$\{IMAGE_TAG\}' \
+  kubernetes/
+```
+
+Expected variables:
+
+```text
+APP_NAME
+IMAGE_NAME
+IMAGE_TAG
+```
+
+---
+
+## 9.100 Verify No Secrets Are Present
+
+Run:
+
+```bash
+grep -R \
+  --exclude-dir=.git \
+  --exclude=RUNBOOK.md \
+  -nE \
+  'AWS_SECRET_ACCESS_KEY=|AWS_ACCESS_KEY_ID=|ghp_|github_pat_|BEGIN (RSA|OPENSSH|PRIVATE) KEY' \
+  . \
+  || echo "No obvious committed secret patterns found."
+```
+
+This is only a basic local check.
+
+It is not a replacement for a dedicated secret scanner.
+
+---
+
+## 9.101 Verify Git-Traced Files
+
+Run:
+
+```bash
+git ls-files
+```
+
+Expected important pipeline files include:
+
+```text
+Jenkinsfile
+Dockerfile
+.dockerignore
+kubernetes/deployment.yaml
+kubernetes/service.yaml
+```
+
+Sensitive local files must not appear.
+
+---
+
+## 9.102 Shared Library Local Verification
+
+In:
+
+```text
+/Users/younghadiz/Documents/tech-workspace/jenkins-shared-library
+```
+
+run:
+
+```bash
+git status
+
+git branch --show-current
+
+git remote -v
+
+find vars src resources test \
+  -type f \
+  -print | sort
+```
+
+Verify the final shared-library structure before Jenkins loads it.
+
+---
+
+## 9.103 Current Shared-Library Testing Limitation
+
+The shared library currently does not contain automated Jenkins Pipeline Unit tests.
+
+Validation occurs through:
+
+```text
+Jenkins integration execution
+```
+
+using consuming application pipelines.
+
+This is acceptable for the learning project.
+
+Future improvement:
+
+```text
+Jenkins Pipeline Unit
+Groovy unit tests
+automated shared-library CI
+```
+
+---
+
+## 9.104 Pipeline Preparation Troubleshooting — Shared Library Not Found
+
+Symptom:
+
+```text
+Library not found
+Could not resolve library
+```
+
+Check:
+
+```text
+Global Pipeline Library name
+Repository URL
+Default Version
+Git connectivity
+Requested @Library name
+Requested branch/tag
+```
+
+The names must match exactly:
+
+```text
+Global library:
+jenkins-shared-library
+
+Jenkinsfile:
+@Library('jenkins-shared-library') _
+```
+
+---
+
+## 9.105 Pipeline Preparation Troubleshooting — Maven Tool Not Found
+
+Symptom:
+
+```text
+No such tool
+Maven installation not found
+```
+
+Check Jenkins Maven tool configuration.
+
+Shared library expects:
+
+```text
+Maven
+```
+
+not:
+
+```text
+Maven3.9
+```
+
+unless the code is changed.
+
+---
+
+## 9.106 Pipeline Preparation Troubleshooting — GitHub Checkout Fails
+
+Check:
+
+```text
+repository URL
+github-token credential ID
+token validity
+token repository permission
+network access
+branch existence
+```
+
+Do not paste the token into the Jenkinsfile while troubleshooting.
+
+---
+
+## 9.107 Pipeline Preparation Troubleshooting — Jenkins Cannot Push Version
+
+Possible causes:
+
+```text
+github-token lacks write permission
+wrong repositoryUrl
+target branch does not exist
+GitHub rejects authentication
+credential kind incorrect
+```
+
+The push form should remain:
+
+```text
+HEAD:<branch>
+```
+
+because Jenkins may be in detached HEAD state.
+
+---
+
+## 9.108 Pipeline Preparation Troubleshooting — Recursive Builds
+
+Check:
+
+```text
+Ignore Committer Strategy plugin installed
+build strategy configured
+ignored email exactly matches Jenkins commit email
+```
+
+Expected ignored email:
+
+```text
+jenkins@example.com
+```
+
+Verify Jenkins commits are actually authored/committed with that identity.
+
+---
+
+## 9.109 Pipeline Preparation Troubleshooting — Webhook Does Not Trigger
+
+First verify that manual:
+
+```text
+Scan Multibranch Pipeline Now
+```
+
+works.
+
+Then inspect:
+
+```text
+GitHub webhook delivery status
+Jenkins accessibility from GitHub
+payload URL
+firewall/network rule
+push-event selection
+branch discovery settings
+```
+
+Do not weaken unrelated server security rules without identifying the actual connectivity problem.
+
+---
+
+## 9.110 Evidence to Capture
+
+Capture screenshots or text evidence of:
+
+```text
+Jenkins Maven tool named Maven
+
+Global Pipeline Library:
+jenkins-shared-library
+
+Default library version:
+master
+
+Shared library repository URL
+
+Multibranch Pipeline configuration
+
+GitHub application repository URL
+
+github-token credential ID
+but never its token value
+
+branch discovery configuration
+
+Jenkinsfile script path
+
+Ignore Committer Strategy
+
+ignored email:
+jenkins@example.com
+
+GitHub webhook configuration
+without exposing secrets
+
+successful branch indexing
+
+Obtained Jenkinsfile message
+
+Loading library jenkins-shared-library@master
+
+application checkout using github-token
+```
+
+---
+
+## 9.111 Security Review
+
+Pipeline Preparation follows these rules:
+
+```text
+credentials stored only in Jenkins
+credential IDs committed to Git
+no access keys in Jenkinsfile
+no tokens in shared library
+no kubeconfig in repository
+no private keys in repository
+only pom.xml automatically committed by Jenkins
+temporary GIT_ASKPASS deleted after push
+```
+
+Known future improvements include:
+
+```text
+shared-library version tags
+short-lived AWS authentication
+more restrictive branch deployment policies
+HTTPS Jenkins endpoint
+automated secret scanning
+shared-library unit tests
+```
+
+---
+
+## 9.112 Cost Review
+
+Jenkins configuration itself does not create new AWS application infrastructure.
+
+Possible existing cost:
+
+```text
+DigitalOcean Jenkins server
+```
+
+The following should still not be created merely to finish this phase:
+
+```text
+EKS cluster
+EC2 worker nodes
+Kubernetes LoadBalancer
+ECR image storage
+```
+
+Those belong to later phases.
+
+---
+
+## 9.113 Phase 9 Final Completion Checklist
+
+```text
+[ ] Jenkins Shared Library restructured
+[ ] shared-library source committed
+[ ] shared-library master updated
+[ ] Maven tool named Maven configured
+[ ] github-token credential configured
+[ ] aws_ecr_creds reference planned/configured securely
+[ ] Jenkins Global Pipeline Library registered
+[ ] library name is jenkins-shared-library
+[ ] default version is master
+[ ] Modern SCM configured
+[ ] shared-library Git repository configured
+[ ] Multibranch Pipeline created
+[ ] application GitHub repository configured
+[ ] branch discovery configured
+[ ] Script Path set to Jenkinsfile
+[ ] Ignore Committer Strategy plugin installed
+[ ] jenkins@example.com ignored
+[ ] all other developer authors allowed
+[ ] GitHub webhook configured
+[ ] manual branch scan succeeds
+[ ] Jenkinsfile discovered
+[ ] shared library loads
+[ ] application repository checkout works
+[ ] no credentials committed to Git
+[ ] Kubernetes manifests remain unapplied during local preparation
+[ ] pipeline preparation committed and pushed
+```
+
+---
+
+## 9.114 Phase 9 Final State
+
+The verified project now has everything needed to progress from local application development to infrastructure preparation:
+
+```text
+Java application
+        ✅
+
+automated test
+        ✅
+
+JAR artifact
+        ✅
+
+Dockerfile
+        ✅
+
+local Docker validation
+        ✅
+
+Jenkins Shared Library
+        ✅
+
+Maven version increment
+        ✅
+
+Docker build helper
+        ✅
+
+ECR push helper
+        ✅
+
+EKS deployment helper
+        ✅
+
+Git commit-back helper
+        ✅
+
+Ignore Committer Strategy design
+        ✅
+
+Multibranch Pipeline design
+        ✅
+
+Kubernetes Deployment manifest
+        ✅
+
+Kubernetes Service manifest
+        ✅
+
+application Jenkinsfile
+        ✅
+```
+
+Pipeline Preparation is now complete.
 
 ---
 
