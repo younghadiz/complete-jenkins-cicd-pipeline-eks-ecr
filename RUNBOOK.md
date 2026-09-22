@@ -18020,7 +18020,1556 @@ failed-first troubleshooting history
 
 # 14. Networking
 
-To be documented in a later verified documentation batch.
+## 14.1 Objective
+
+Verify how external traffic reaches the deployed Spring Boot application through Kubernetes and AWS.
+
+The deployment created a Kubernetes Service:
+
+```yaml
+type: LoadBalancer
+```
+
+This caused AWS to provision an external load balancer.
+
+The verified request path is:
+
+```text
+Internet
+    ↓
+AWS Classic Load Balancer
+    ↓
+Service port 80
+    ↓
+EC2 worker / NodePort 30321
+    ↓
+Kubernetes Service
+    ↓
+targetPort 8080
+    ↓
+java-maven-app Pod
+    ↓
+Spring Boot application
+```
+
+This phase verifies each layer individually.
+
+---
+
+## 14.2 Kubernetes Service Manifest
+
+The committed application Service is:
+
+```yaml
+apiVersion: v1
+kind: Service
+
+metadata:
+  name: ${APP_NAME}
+
+spec:
+  selector:
+    app: ${APP_NAME}
+
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
+
+  type: LoadBalancer
+```
+
+The important mapping is:
+
+```text
+external / Service port:
+80
+
+application container port:
+8080
+```
+
+Kubernetes automatically allocated the NodePort.
+
+---
+
+## 14.3 Verify Deployment Before Networking
+
+Networking verification is meaningful only if the application workload is healthy.
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Then:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Verified application state:
+
+```text
+Deployment:
+1/1 Ready
+
+Pod:
+Running
+
+Restarts:
+0
+
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+If the Pod is not healthy, troubleshoot the workload before treating an external connectivity problem as a networking problem.
+
+---
+
+# Kubernetes Service
+
+## 14.4 Verify Service
+
+Run:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified output:
+
+```text
+NAME:
+java-maven-app
+
+TYPE:
+LoadBalancer
+
+CLUSTER-IP:
+10.100.197.178
+
+EXTERNAL-IP:
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+
+PORT(S):
+80:30321/TCP
+
+SELECTOR:
+app=java-maven-app
+```
+
+---
+
+## 14.5 Understand the Three Ports
+
+The verified Service contains three related networking values:
+
+```text
+port:
+80
+
+nodePort:
+30321
+
+targetPort:
+8080
+```
+
+They are not interchangeable.
+
+### `port: 80`
+
+This is the Kubernetes Service port.
+
+Clients reach the Service through:
+
+```text
+TCP 80
+```
+
+### `nodePort: 30321`
+
+Because this Service is:
+
+```text
+LoadBalancer
+```
+
+Kubernetes allocated:
+
+```text
+30321
+```
+
+on the worker nodes.
+
+The AWS Classic ELB forwards traffic toward the worker infrastructure through this NodePort.
+
+### `targetPort: 8080`
+
+The selected application Pod receives traffic on:
+
+```text
+8080
+```
+
+where Spring Boot is listening.
+
+---
+
+## 14.6 Complete Port Flow
+
+```text
+Browser / curl
+       │
+       │ HTTP 80
+       ▼
+AWS Classic ELB
+       │
+       │ TCP 30321
+       ▼
+EKS worker node
+       │
+       ▼
+Kubernetes Service
+       │
+       │ targetPort 8080
+       ▼
+java-maven-app Pod
+       │
+       ▼
+Spring Boot :8080
+```
+
+The Service abstraction handles forwarding from the NodePort to the correct Pod endpoint.
+
+---
+
+## 14.7 Describe the Service
+
+Run:
+
+```bash
+kubectl describe service \
+  java-maven-app \
+  --namespace default
+```
+
+Verified important fields:
+
+```text
+Selector:
+app=java-maven-app
+
+Type:
+LoadBalancer
+
+IP:
+10.100.197.178
+
+LoadBalancer Ingress:
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+
+Port:
+80/TCP
+
+TargetPort:
+8080/TCP
+
+NodePort:
+30321/TCP
+
+Endpoints:
+192.168.50.149:8080
+
+External Traffic Policy:
+Cluster
+
+Internal Traffic Policy:
+Cluster
+```
+
+---
+
+## 14.8 Load Balancer Creation Events
+
+`kubectl describe service` also showed:
+
+```text
+EnsuringLoadBalancer
+EnsuredLoadBalancer
+```
+
+from:
+
+```text
+service-controller
+```
+
+This confirms that Kubernetes requested and completed creation of the cloud load balancer.
+
+---
+
+# ClusterIP
+
+## 14.9 ClusterIP
+
+Verified ClusterIP:
+
+```text
+10.100.197.178
+```
+
+The ClusterIP is the virtual Service address available inside the Kubernetes cluster.
+
+It is not the public application endpoint.
+
+Conceptually:
+
+```text
+Pods inside cluster
+      ↓
+10.100.197.178:80
+      ↓
+Service
+      ↓
+application Pod:8080
+```
+
+External users instead use the AWS load-balancer DNS name.
+
+---
+
+# Service Selector
+
+## 14.10 Service-to-Pod Matching
+
+The Service selector is:
+
+```yaml
+selector:
+  app: java-maven-app
+```
+
+The Deployment's Pod template uses:
+
+```yaml
+labels:
+  app: java-maven-app
+```
+
+These must match.
+
+Conceptually:
+
+```text
+Service selector
+app=java-maven-app
+
+          ↓ matches
+
+Pod label
+app=java-maven-app
+```
+
+If these values differ, the Service can exist successfully but have no application endpoints.
+
+---
+
+# EndpointSlice
+
+## 14.11 Verify EndpointSlice
+
+Run:
+
+```bash
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+Verified:
+
+```text
+NAME:
+java-maven-app-t4n5k
+
+ADDRESS TYPE:
+IPv4
+
+PORT:
+8080
+
+ENDPOINT:
+192.168.50.149
+```
+
+Therefore the Kubernetes Service had a valid backend:
+
+```text
+192.168.50.149:8080
+```
+
+---
+
+## 14.12 Why EndpointSlice Matters
+
+A Service existing does not prove it has a working backend.
+
+This:
+
+```bash
+kubectl get service
+```
+
+can look normal while:
+
+```text
+EndpointSlice
+```
+
+is empty.
+
+The EndpointSlice proves that Kubernetes successfully matched:
+
+```text
+Service selector
+        ↓
+Pod label
+        ↓
+Pod IP + targetPort
+```
+
+For this project:
+
+```text
+app=java-maven-app
+        ↓
+192.168.50.149
+        ↓
+8080
+```
+
+---
+
+## 14.13 Backend Pod IP Is Temporary
+
+Verified Pod IP at the time:
+
+```text
+192.168.50.149
+```
+
+Do not hardcode this value.
+
+Pod IPs can change when Pods are:
+
+```text
+recreated
+rescheduled
+rolled back
+updated
+```
+
+The stable abstraction is:
+
+```text
+Service
+```
+
+not the individual Pod IP.
+
+---
+
+# Service Full Configuration
+
+## 14.14 Inspect Full Service YAML
+
+Run:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o yaml
+```
+
+Verified important values included:
+
+```yaml
+spec:
+  allocateLoadBalancerNodePorts: true
+
+  clusterIP: 10.100.197.178
+
+  externalTrafficPolicy: Cluster
+
+  internalTrafficPolicy: Cluster
+
+  ipFamilies:
+    - IPv4
+
+  ipFamilyPolicy: SingleStack
+
+  ports:
+    - nodePort: 30321
+      port: 80
+      protocol: TCP
+      targetPort: 8080
+
+  selector:
+    app: java-maven-app
+
+  sessionAffinity: None
+
+  type: LoadBalancer
+```
+
+---
+
+## 14.15 Load Balancer Cleanup Finalizer
+
+The live Service contained:
+
+```text
+service.kubernetes.io/load-balancer-cleanup
+```
+
+as a finalizer.
+
+This helps Kubernetes coordinate cloud load-balancer cleanup when the Service is deleted.
+
+This is another reason to delete the Service normally before deleting the cluster during Phase 20.
+
+---
+
+# External Endpoint
+
+## 14.16 Read the Application Host Dynamically
+
+Do not manually type the generated hostname every time.
+
+Run:
+
+```bash
+export APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+```
+
+Verify:
+
+```bash
+echo "$APP_HOST"
+```
+
+Verified:
+
+```text
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+```
+
+This hostname is environment-specific.
+
+A recreated Service may receive a different DNS name.
+
+---
+
+# DNS
+
+## 14.17 Verify DNS Resolution
+
+Run:
+
+```bash
+nslookup "$APP_HOST"
+```
+
+The verified ELB DNS name resolved to multiple public IPv4 addresses.
+
+At the time of verification, addresses included:
+
+```text
+16.54.216.90
+3.97.206.65
+```
+
+These IP addresses are not stable application configuration.
+
+Use the ELB hostname.
+
+---
+
+## 14.18 Why Use the DNS Name
+
+Cloud load balancer IPs may change.
+
+Therefore use:
+
+```text
+a20...elb.amazonaws.com
+```
+
+or a custom DNS name pointing to it.
+
+Do not configure clients using one resolved ELB IP address.
+
+---
+
+# External HTTP Verification
+
+## 14.19 Full HTTP Test
+
+Run:
+
+```bash
+curl -i \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Verified status:
+
+```text
+HTTP/1.1 200
+```
+
+Verified response included:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+This proves that external traffic reached the application successfully.
+
+---
+
+## 14.20 HTTP Status-Only Verification
+
+Run:
+
+```bash
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Expected:
+
+```text
+HTTP status: 200
+```
+
+---
+
+## 14.21 Verify Expected Application Content
+
+Run:
+
+```bash
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Expected:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+This verifies more than network connectivity.
+
+It confirms that the expected application is responding behind the load balancer.
+
+---
+
+# Identify AWS Load Balancer Type
+
+## 14.22 Do Not Assume ALB or NLB
+
+A Kubernetes Service:
+
+```yaml
+type: LoadBalancer
+```
+
+does not mean the resource is automatically an Application Load Balancer.
+
+Verify the AWS resource type.
+
+---
+
+## 14.23 Check Classic ELB
+
+Run:
+
+```bash
+aws elb describe-load-balancers \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[].{
+    Name:LoadBalancerName,
+    DNSName:DNSName,
+    Scheme:Scheme
+  }' \
+  --output table
+```
+
+Verified:
+
+```text
+Name:
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35
+
+DNS:
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+
+Scheme:
+internet-facing
+```
+
+Therefore the cloud resource was:
+
+```text
+AWS Classic Load Balancer
+```
+
+---
+
+## 14.24 Check ALB/NLB Separately
+
+Run:
+
+```bash
+aws elbv2 describe-load-balancers \
+  --region ca-central-1 \
+  --query 'LoadBalancers[].{
+    Name:LoadBalancerName,
+    Type:Type,
+    Scheme:Scheme,
+    DNSName:DNSName
+  }' \
+  --output table
+```
+
+The verified project returned no ALB/NLB entries for this workload.
+
+Therefore:
+
+```text
+Classic ELB
+✅
+
+Application Load Balancer
+❌
+
+Network Load Balancer
+❌
+```
+
+---
+
+# No Kubernetes Ingress
+
+## 14.25 Verify Ingress Resources
+
+Run:
+
+```bash
+kubectl get ingress \
+  --namespace default
+```
+
+Verified:
+
+```text
+No resources found in default namespace.
+```
+
+Therefore traffic is not:
+
+```text
+Internet
+→ ALB Ingress
+→ Service
+→ Pod
+```
+
+Instead it is:
+
+```text
+Internet
+→ Service-created Classic ELB
+→ NodePort
+→ Service
+→ Pod
+```
+
+---
+
+## 14.26 Why There Is No Ingress
+
+The application Service itself is:
+
+```yaml
+type: LoadBalancer
+```
+
+so it already requests a cloud load balancer.
+
+An Ingress controller is not required for this simple single-application learning deployment.
+
+A larger production environment might use:
+
+```text
+AWS Load Balancer Controller
++
+Ingress
++
+ALB
+```
+
+for:
+
+```text
+host routing
+path routing
+TLS termination
+multiple applications
+```
+
+That is a future improvement, not part of this verified capstone.
+
+---
+
+# Classic ELB Backend
+
+## 14.27 Verify ELB Backend Health
+
+Load balancer name:
+
+```text
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35
+```
+
+Run:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'InstanceStates[].{
+    Instance:InstanceId,
+    State:State
+  }' \
+  --output table
+```
+
+Verified backend:
+
+```text
+State:
+InService
+```
+
+This confirms the Classic ELB considered the worker backend healthy.
+
+---
+
+## 14.28 Health Check Configuration
+
+Run:
+
+```bash
+aws elb describe-load-balancers \
+  --load-balancer-names a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[0].HealthCheck' \
+  --output table
+```
+
+Verified health check:
+
+```text
+Target:
+TCP:30321
+
+Interval:
+10 seconds
+
+Timeout:
+5 seconds
+
+HealthyThreshold:
+2
+
+UnhealthyThreshold:
+6
+```
+
+This directly ties the Classic ELB health check to the Kubernetes-assigned NodePort:
+
+```text
+30321
+```
+
+---
+
+## 14.29 Backend Flow
+
+The verified backend relationship is:
+
+```text
+Classic ELB
+      │
+      │ health / traffic
+      ▼
+TCP 30321 on EKS worker
+      │
+      ▼
+Kubernetes Service
+      │
+      ▼
+EndpointSlice
+192.168.50.149:8080
+```
+
+This is why both:
+
+```text
+ELB instance health
+```
+
+and:
+
+```text
+EndpointSlice
+```
+
+must be checked when troubleshooting.
+
+---
+
+# External Traffic Policy
+
+## 14.30 Verified Traffic Policy
+
+Service:
+
+```text
+externalTrafficPolicy:
+Cluster
+```
+
+This allows Kubernetes to route traffic received on a node to an eligible Service endpoint within the cluster.
+
+The project does not require:
+
+```text
+externalTrafficPolicy: Local
+```
+
+for the current learning objective.
+
+---
+
+# Internal Traffic Policy
+
+## 14.31 Verified Internal Policy
+
+```text
+internalTrafficPolicy:
+Cluster
+```
+
+Internal Service traffic may be routed to matching endpoints across the cluster.
+
+With only one worker and one application replica, the distinction is limited in this capstone, but the verified configuration should still be preserved.
+
+---
+
+# Network Architecture
+
+## 14.32 Verified Network Path
+
+```text
+                    INTERNET
+                       │
+                       │ HTTP :80
+                       ▼
+        AWS Classic Load Balancer
+          internet-facing scheme
+                       │
+                       │ TCP :30321
+                       ▼
+                EKS Worker Node
+                       │
+                       │ Kubernetes
+                       ▼
+              java-maven-app
+             LoadBalancer Service
+                       │
+            ClusterIP 10.100.197.178
+                       │
+                       │ targetPort :8080
+                       ▼
+                EndpointSlice
+              192.168.50.149:8080
+                       │
+                       ▼
+             java-maven-app Pod
+                       │
+                       ▼
+            Spring Boot Application
+                       │
+                       ▼
+                  HTTP 200
+```
+
+---
+
+# Troubleshooting
+
+## 14.33 External DNS Name Is Pending
+
+Immediately after creating a Service:
+
+```text
+EXTERNAL-IP
+```
+
+may temporarily show:
+
+```text
+<pending>
+```
+
+Check:
+
+```bash
+kubectl describe service \
+  java-maven-app \
+  --namespace default
+```
+
+Look for events such as:
+
+```text
+EnsuringLoadBalancer
+EnsuredLoadBalancer
+```
+
+Do not recreate the Service immediately merely because cloud provisioning takes time.
+
+---
+
+## 14.34 Service Exists but No Endpoints
+
+Check:
+
+```bash
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+If no backend exists, compare:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o yaml
+```
+
+with:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  --show-labels
+```
+
+Typical cause:
+
+```text
+Service selector
+does not match
+Pod label
+```
+
+---
+
+## 14.35 Endpoint Exists but External HTTP Fails
+
+Check in this order:
+
+```text
+Pod Ready?
+        ↓
+EndpointSlice present?
+        ↓
+Service correct?
+        ↓
+ELB DNS resolved?
+        ↓
+ELB backend InService?
+        ↓
+ELB health check correct?
+        ↓
+security/network path available?
+```
+
+Do not immediately rebuild the application.
+
+---
+
+## 14.36 Pod Is Healthy but ELB Backend Is OutOfService
+
+Inspect:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1
+```
+
+Then inspect:
+
+```bash
+aws elb describe-load-balancers \
+  --load-balancer-names a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[0].HealthCheck'
+```
+
+Compare the health-check target with:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o jsonpath='{.spec.ports[0].nodePort}{"\n"}'
+```
+
+For the verified deployment both were:
+
+```text
+30321
+```
+
+---
+
+## 14.37 DNS Resolves but HTTP Times Out
+
+This suggests the failure is further downstream than DNS.
+
+Check:
+
+```text
+ELB health
+NodePort
+Service
+EndpointSlice
+Pod readiness
+```
+
+Do not modify DNS if the hostname is already resolving correctly.
+
+---
+
+## 14.38 HTTP 503 / Unhealthy Backend
+
+Check:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app
+
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app
+
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+Possible causes include:
+
+```text
+application not started
+wrong targetPort
+no matching endpoint
+Pod not Ready
+container restart
+```
+
+---
+
+## 14.39 Connection Refused on Pod Target
+
+Verify Spring Boot is actually listening on:
+
+```text
+8080
+```
+
+Check logs:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+The application should report Tomcat started on:
+
+```text
+8080
+```
+
+---
+
+# Security
+
+## 14.40 HTTP Only
+
+The verified application endpoint uses:
+
+```text
+HTTP
+port 80
+```
+
+There is no verified:
+
+```text
+HTTPS
+TLS certificate
+ACM certificate
+custom domain
+```
+
+in this capstone.
+
+This is acceptable for the basic learning deployment.
+
+---
+
+## 14.41 Future TLS Improvement
+
+A production implementation should normally provide:
+
+```text
+HTTPS
+TLS certificate
+controlled DNS
+```
+
+Possible architecture:
+
+```text
+Route 53 / DNS
+      ↓
+ALB
+      ↓
+ACM TLS certificate
+      ↓
+Ingress / Service
+      ↓
+Pod
+```
+
+This is a future improvement and must not be presented as part of the verified implementation.
+
+---
+
+## 14.42 Public Exposure
+
+The Classic ELB scheme is:
+
+```text
+internet-facing
+```
+
+Therefore the application is intentionally publicly reachable while the Service exists.
+
+Do not expose applications publicly unless that is intended.
+
+---
+
+# Cost
+
+## 14.43 Load Balancer Cost
+
+Creating:
+
+```yaml
+type: LoadBalancer
+```
+
+created a real AWS load balancer.
+
+That load balancer can incur charges while it exists.
+
+The Service should therefore not be left running indefinitely after the learning project is complete.
+
+---
+
+## 14.44 NodePort Is Also Present
+
+The LoadBalancer Service automatically allocated:
+
+```text
+30321
+```
+
+as a NodePort.
+
+Do not create a second separate NodePort Service just because the NodePort is visible.
+
+It is already part of the LoadBalancer Service configuration.
+
+---
+
+# Networking Evidence
+
+## 14.45 Kubernetes Evidence
+
+Capture:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl describe service \
+  java-maven-app \
+  --namespace default
+
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+---
+
+## 14.46 AWS Evidence
+
+Capture:
+
+```bash
+aws elb describe-load-balancers \
+  --region ca-central-1 \
+  --query 'LoadBalancerDescriptions[].{
+    Name:LoadBalancerName,
+    DNSName:DNSName,
+    Scheme:Scheme
+  }' \
+  --output table
+```
+
+Then:
+
+```bash
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --output table
+```
+
+---
+
+## 14.47 Application Evidence
+
+Run:
+
+```bash
+export APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+```
+
+Then:
+
+```bash
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Expected:
+
+```text
+HTTP status: 200
+```
+
+Then:
+
+```bash
+curl -fsS \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Expected:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+---
+
+# Networking Completion Checklist
+
+## 14.48 Verification Checklist
+
+```text
+[ ] Deployment is Ready 1/1
+[ ] application Pod is Running
+[ ] Pod Restarts = 0
+
+[ ] Service exists
+[ ] Service type = LoadBalancer
+[ ] ClusterIP = 10.100.197.178
+[ ] Service port = 80
+[ ] NodePort = 30321
+[ ] targetPort = 8080
+[ ] selector = app=java-maven-app
+
+[ ] EndpointSlice exists
+[ ] EndpointSlice port = 8080
+[ ] backend endpoint exists
+
+[ ] external ELB hostname assigned
+[ ] ELB DNS resolves
+[ ] load balancer identified as Classic ELB
+[ ] scheme = internet-facing
+[ ] ALB/NLB query returns no application LB
+[ ] no Kubernetes Ingress exists
+
+[ ] Classic ELB worker backend = InService
+[ ] ELB health check target = TCP:30321
+
+[ ] external HTTP returns 200
+[ ] expected HTML content returned
+
+[ ] networking cost acknowledged
+[ ] HTTP-only limitation documented
+[ ] production ALB/TLS improvement separated
+```
+
+---
+
+## 14.49 Verified Networking Snapshot
+
+```text
+Kubernetes Service
+├── name: java-maven-app
+├── namespace: default
+├── type: LoadBalancer
+├── ClusterIP: 10.100.197.178
+├── port: 80
+├── NodePort: 30321
+├── targetPort: 8080
+└── selector: app=java-maven-app
+
+Backend
+├── EndpointSlice: java-maven-app-t4n5k
+├── address type: IPv4
+└── endpoint: 192.168.50.149:8080
+
+AWS
+├── type: Classic Load Balancer
+├── scheme: internet-facing
+├── backend: InService
+└── health check: TCP:30321
+
+Kubernetes Ingress
+└── none
+
+External Application
+├── protocol: HTTP
+├── port: 80
+├── HTTP status: 200
+└── content: Welcome to Java Maven Application
+```
+
+---
+
+## 14.50 Phase 14 Final State
+
+```text
+Service routing
+✅
+
+Pod endpoint
+✅
+
+NodePort
+✅
+
+Classic ELB
+✅
+
+DNS resolution
+✅
+
+ELB backend health
+✅
+
+external HTTP
+✅
+
+application response
+✅
+
+Ingress distinction
+✅
+
+ALB/NLB distinction
+✅
+
+cost documented
+✅
+```
+
+**Networking is complete.**
 
 ---
 
