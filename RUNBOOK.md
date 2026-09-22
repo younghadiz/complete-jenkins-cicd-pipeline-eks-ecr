@@ -25953,10 +25953,2587 @@ dual-remote documentation branch
 
 # 19. Release
 
-To be documented after documentation verification.
+## 19.1 Objective
+
+Promote the completed and verified capstone from the development branches into the permanent `main` branch, create an immutable release reference, publish the final Git state to both remote repositories, and preserve the already verified Kubernetes deployment without accidentally causing Jenkins to produce another application version.
+
+The release process must preserve the distinction between:
+
+```text
+application version:
+1.1.1
+```
+
+and:
+
+```text
+Jenkins-built container image:
+1.1.1-2
+```
+
+The Git release tag represents the application/project release:
+
+```text
+v1.1.1
+```
+
+The container tag additionally contains the Jenkins build number.
+
+---
+
+## 19.2 Release Preconditions
+
+Before starting release:
+
+```text
+Requirements                    ✅
+Repository Setup                ✅
+Local Environment               ✅
+Application Build               ✅
+Automated Tests                 ✅
+Artifact Creation               ✅
+Containerization                ✅
+Local Container Testing         ✅
+Pipeline Preparation            ✅
+Infrastructure Preparation      ✅
+Security Configuration          ✅
+Server and Cloud Provisioning   ✅
+Deployment                      ✅
+Networking                      ✅
+Monitoring                      ✅
+End-to-End Testing              ✅
+Rollback                        ✅
+Documentation                   ✅
+```
+
+The verified Kubernetes runtime was:
+
+```text
+Deployment:
+java-maven-app
+
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+Image digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+The application was externally reachable and returned:
+
+```text
+HTTP 200
+```
+
+with:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+---
+
+## 19.3 Initial Release Branch State
+
+Before release integration:
+
+```text
+main:
+6b4bb6f04b4cb26d43cf2adbf6dd93f55eb0b221
+
+develop:
+09c96af58fd465c9adb18b6a54aba839109a90b6
+
+docs/complete-project-documentation:
+92ee251f6995fecc988833f4a1afa9dd6b5c6905
+```
+
+All three were synchronized between the applicable local, GitHub and GitLab refs.
+
+The documentation branch had:
+
+```text
+92ee251 docs: complete project documentation
+90f6100 docs: add project overview and architecture
+7237573 docs: document Kubernetes rollback procedure
+6db0648 docs: document end-to-end verification
+031c863 docs: document application monitoring
+3353707 docs: document application networking
+616dfc0 docs: document Jenkins deployment workflow
+3ae2b2c docs: complete cloud provisioning runbook
+2339b1c docs: document Jenkins server provisioning
+38ddf3e docs: document security configuration
+90e0e98 docs: document infrastructure preparation
+b233611 docs: complete Jenkins pipeline preparation
+8cc4566 docs: document pipeline preparation and shared library
+f13026b docs: document containerization and local testing
+78d9541 docs: document local build tests and artifacts
+2653a5f docs: add requirements and repository setup runbook
+```
+
+---
+
+## 19.4 Verify Release Ancestry
+
+Run from the application repository.
+
+### LOCAL
+
+```bash
+pwd
+git status
+git branch --show-current
+git remote -v
+```
+
+Verify that `develop` is an ancestor of the documentation branch:
+
+```bash
+if git merge-base --is-ancestor \
+  develop \
+  docs/complete-project-documentation
+then
+  echo "PASS: docs branch contains develop."
+else
+  echo "FAIL: docs branch does not contain develop."
+  exit 1
+fi
+```
+
+Verified result:
+
+```text
+PASS: docs branch contains develop.
+```
+
+Verify that `main` is an ancestor of `develop`:
+
+```bash
+if git merge-base --is-ancestor \
+  main \
+  develop
+then
+  echo "PASS: develop contains main."
+else
+  echo "FAIL: develop does not contain main."
+  exit 1
+fi
+```
+
+Verified:
+
+```text
+PASS: develop contains main.
+```
+
+---
+
+## 19.5 Verify Documentation-Only Changes
+
+Run:
+
+```bash
+git diff \
+  --name-status \
+  develop...docs/complete-project-documentation
+```
+
+Verified result:
+
+```text
+M       README.md
+A       RUNBOOK.md
+A       docs/architecture.md
+A       docs/future-improvements.md
+A       docs/troubleshooting.md
+A       docs/verification-evidence.md
+```
+
+No application source, Dockerfile, Jenkinsfile or Kubernetes manifest was modified by the documentation branch.
+
+---
+
+## 19.6 Verify Release Tag Does Not Already Exist
+
+Check locally:
+
+```bash
+git tag --list 'v1.1.1'
+```
+
+Check GitHub:
+
+```bash
+git ls-remote \
+  --tags \
+  github \
+  'refs/tags/v1.1.1' \
+  'refs/tags/v1.1.1^{}'
+```
+
+Check GitLab:
+
+```bash
+git ls-remote \
+  --tags \
+  gitlab \
+  'refs/tags/v1.1.1' \
+  'refs/tags/v1.1.1^{}'
+```
+
+Verified result before tag creation:
+
+```text
+no existing v1.1.1 tag
+```
+
+---
+
+# Merge Documentation Into Develop
+
+## 19.7 Switch to `develop`
+
+### LOCAL
+
+```bash
+git switch develop
+```
+
+Verified:
+
+```text
+Switched to branch 'develop'
+Your branch is up to date with 'github/develop'.
+```
+
+---
+
+## 19.8 Refresh `develop`
+
+```bash
+git pull \
+  --ff-only \
+  github \
+  develop
+```
+
+Verified:
+
+```text
+Already up to date.
+```
+
+---
+
+## 19.9 Merge Documentation With Non-Fast-Forward History
+
+Run:
+
+```bash
+git merge \
+  --no-ff \
+  docs/complete-project-documentation \
+  -m "merge: complete project documentation"
+```
+
+Verified merge commit:
+
+```text
+ffde811
+merge: complete project documentation
+```
+
+The merge introduced:
+
+```text
+README.md
+RUNBOOK.md
+docs/architecture.md
+docs/future-improvements.md
+docs/troubleshooting.md
+docs/verification-evidence.md
+```
+
+---
+
+## 19.10 Verify No Application Changes Were Introduced
+
+Run:
+
+```bash
+git diff \
+  --name-status \
+  09c96af..HEAD
+```
+
+Verified:
+
+```text
+M       README.md
+A       RUNBOOK.md
+A       docs/architecture.md
+A       docs/future-improvements.md
+A       docs/troubleshooting.md
+A       docs/verification-evidence.md
+```
+
+---
+
+## 19.11 Verify Maven Version
+
+Run:
+
+```bash
+mvn help:evaluate \
+  -Dexpression=project.version \
+  -q \
+  -DforceStdout
+```
+
+Verified:
+
+```text
+1.1.1
+```
+
+Documentation integration did not change the application version.
+
+---
+
+# Develop Release Build
+
+## 19.12 Build and Test `develop`
+
+Run:
+
+```bash
+mvn clean package
+```
+
+Verified result:
+
+```text
+Tests run: 1
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+Generated artifact:
+
+```text
+target/java-maven-app-1.1.1.jar
+```
+
+Observed size:
+
+```text
+approximately 23 MB
+```
+
+Verify:
+
+```bash
+find target \
+  -maxdepth 1 \
+  -type f \
+  -name '*.jar' \
+  -exec ls -lh {} \;
+```
+
+Git remained clean because:
+
+```text
+target/
+```
+
+is ignored.
+
+---
+
+# Promote Develop Into Main
+
+## 19.13 Switch to `main`
+
+Before switching:
+
+```bash
+pwd
+git status
+git branch --show-current
+git remote -v
+```
+
+Then:
+
+```bash
+git switch main
+```
+
+Verified:
+
+```text
+main
+```
+
+---
+
+## 19.14 Refresh Remote Main
+
+Run:
+
+```bash
+git pull \
+  --ff-only \
+  github \
+  main
+```
+
+Verified:
+
+```text
+Already up to date.
+```
+
+Before release merge:
+
+```text
+main:
+6b4bb6f
+
+commit:
+chore: import starting application baseline
+```
+
+---
+
+## 19.15 Merge `develop` Into `main`
+
+Run:
+
+```bash
+git merge \
+  --no-ff \
+  develop \
+  -m "merge: release complete Jenkins EKS ECR capstone"
+```
+
+Verified release merge commit:
+
+```text
+bf4290a
+```
+
+Full SHA:
+
+```text
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+```
+
+Commit subject:
+
+```text
+merge: release complete Jenkins EKS ECR capstone
+```
+
+Merge parents:
+
+```text
+6b4bb6f
+ffde811
+```
+
+---
+
+## 19.16 Verify Main and Develop Contain Identical Files
+
+Run:
+
+```bash
+git diff \
+  --stat \
+  develop..main
+```
+
+and:
+
+```bash
+git diff \
+  --name-status \
+  develop..main
+```
+
+Verified result:
+
+```text
+no output
+```
+
+Meaning:
+
+```text
+main and develop contained the same file tree
+```
+
+although their commit SHAs differ because `main` contains the additional release merge commit.
+
+---
+
+# Main Release Build
+
+## 19.17 Verify Maven Version on `main`
+
+Run:
+
+```bash
+mvn help:evaluate \
+  -Dexpression=project.version \
+  -q \
+  -DforceStdout
+```
+
+Verified:
+
+```text
+1.1.1
+```
+
+---
+
+## 19.18 Build and Test the Release Candidate
+
+Run:
+
+```bash
+mvn clean package
+```
+
+Verified:
+
+```text
+Tests run: 1
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+Generated:
+
+```text
+target/java-maven-app-1.1.1.jar
+```
+
+Observed size:
+
+```text
+23 MB
+```
+
+The working tree remained:
+
+```text
+clean
+```
+
+---
+
+# Release Tag
+
+## 19.19 Create Annotated Release Tag
+
+Before creation, confirm that `v1.1.1` still does not exist.
+
+Then:
+
+```bash
+git tag \
+  -a v1.1.1 \
+  -m "Release v1.1.1 - Complete Jenkins CI/CD Pipeline with Amazon EKS and ECR"
+```
+
+This is an **annotated tag**, not a lightweight tag.
+
+---
+
+## 19.20 Verify Release Tag
+
+Run:
+
+```bash
+git show \
+  --no-patch \
+  --decorate \
+  v1.1.1
+```
+
+Verified:
+
+```text
+tag:
+v1.1.1
+
+message:
+Release v1.1.1 - Complete Jenkins CI/CD Pipeline with Amazon EKS and ECR
+
+commit:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+```
+
+Verify:
+
+```bash
+printf 'main:    '
+git rev-parse main
+
+printf 'v1.1.1: '
+git rev-list \
+  -n 1 \
+  v1.1.1
+```
+
+Verified:
+
+```text
+main:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+
+v1.1.1:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+```
+
+The release tag points exactly to the release merge commit.
+
+---
+
+# Jenkins Release Safety
+
+## 19.21 Why Jenkins Was Disabled Before Publishing
+
+The verified shared pipeline executes:
+
+```text
+Increment Version
+→ Build Application
+→ Build Docker Image
+→ Push Docker Image
+→ Deploy
+→ Commit Version Update
+```
+
+The pipeline does not currently impose a production branch guard around all deployment stages.
+
+Therefore pushing the new:
+
+```text
+develop
+```
+
+and:
+
+```text
+main
+```
+
+commits while Jenkins Multibranch automation was active could have caused:
+
+```text
+another version increment
+another Docker image
+another ECR push
+another EKS rollout
+another Jenkins Git commit
+```
+
+That would have changed the verified release state.
+
+The capstone Multibranch Pipeline was therefore temporarily disabled before remote release publication.
+
+The Jenkins server itself was not stopped because it is a reusable/shared DevOps environment.
+
+---
+
+# Remote Release Publication
+
+## 19.22 Publish `develop` to GitHub
+
+Run:
+
+```bash
+git push \
+  github \
+  develop:develop
+```
+
+Verified:
+
+```text
+09c96af..ffde811
+develop -> develop
+```
+
+---
+
+## 19.23 Mirror `develop` to GitLab
+
+Run:
+
+```bash
+git push \
+  gitlab \
+  develop:develop
+```
+
+Verified:
+
+```text
+09c96af..ffde811
+develop -> develop
+```
+
+---
+
+## 19.24 Publish `main` to GitHub
+
+Run:
+
+```bash
+git push \
+  github \
+  main:main
+```
+
+Verified:
+
+```text
+6b4bb6f..bf4290a
+main -> main
+```
+
+---
+
+## 19.25 Mirror `main` to GitLab
+
+Run:
+
+```bash
+git push \
+  gitlab \
+  main:main
+```
+
+Verified:
+
+```text
+6b4bb6f..bf4290a
+main -> main
+```
+
+---
+
+## 19.26 Publish Release Tag to GitHub
+
+Run:
+
+```bash
+git push \
+  github \
+  refs/tags/v1.1.1
+```
+
+Verified:
+
+```text
+[new tag]
+v1.1.1 -> v1.1.1
+```
+
+---
+
+## 19.27 Mirror Release Tag to GitLab
+
+Run:
+
+```bash
+git push \
+  gitlab \
+  refs/tags/v1.1.1
+```
+
+Verified:
+
+```text
+[new tag]
+v1.1.1 -> v1.1.1
+```
+
+---
+
+## 19.28 Historical Extra `git push --tags`
+
+During the practical release an additional command was executed:
+
+```bash
+git push --tags
+```
+
+Result:
+
+```text
+Everything up-to-date
+```
+
+No additional tag was published.
+
+For future releases, prefer:
+
+```bash
+git push \
+  <remote> \
+  refs/tags/<exact-tag>
+```
+
+rather than:
+
+```text
+git push --tags
+```
+
+because the latter can publish unrelated local tags.
+
+---
+
+# Release Verification
+
+## 19.29 Verify Branch Synchronization
+
+After:
+
+```bash
+git fetch github \
+  --prune \
+  --tags
+
+git fetch gitlab \
+  --prune \
+  --tags
+```
+
+verified:
+
+```text
+Local develop:
+ffde81116a43f7bbd42ed7e139349c4b7120619b
+
+GitHub develop:
+ffde81116a43f7bbd42ed7e139349c4b7120619b
+
+GitLab develop:
+ffde81116a43f7bbd42ed7e139349c4b7120619b
+```
+
+and:
+
+```text
+Local main:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+
+GitHub main:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+
+GitLab main:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+```
+
+---
+
+## 19.30 Verify Annotated Tag on Both Remotes
+
+GitHub returned:
+
+```text
+a9013e23ac60a33d54498fd513bac065fcaafae8
+refs/tags/v1.1.1
+
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+refs/tags/v1.1.1^{}
+```
+
+GitLab returned the same.
+
+Interpretation:
+
+```text
+a9013e23...
+```
+
+is the annotated Git tag object.
+
+```text
+bf4290a...
+```
+
+is the commit referenced by that tag.
+
+This is expected behavior for an annotated tag.
+
+---
+
+## 19.31 Verify Remote Release Contents
+
+Verified GitHub `main`:
+
+```text
+bf4290a
+merge: release complete Jenkins EKS ECR capstone
+```
+
+Verified Maven version from remote `main`:
+
+```xml
+<version>1.1.1</version>
+```
+
+Verified documentation files:
+
+```text
+PASS: README.md
+PASS: RUNBOOK.md
+PASS: docs/architecture.md
+PASS: docs/troubleshooting.md
+PASS: docs/verification-evidence.md
+PASS: docs/future-improvements.md
+```
+
+---
+
+## 19.32 Release State
+
+Permanent release record:
+
+```text
+Release tag:
+v1.1.1
+
+Release commit:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+
+develop:
+ffde81116a43f7bbd42ed7e139349c4b7120619b
+```
+
+Remote state:
+
+```text
+GitHub main:
+bf4290a
+
+GitLab main:
+bf4290a
+
+GitHub develop:
+ffde811
+
+GitLab develop:
+ffde811
+```
+
+---
+
+## 19.33 Git Release vs Container Release
+
+Do not confuse:
+
+```text
+v1.1.1
+```
+
+with:
+
+```text
+1.1.1-2
+```
+
+They represent related but different things.
+
+```text
+v1.1.1
+```
+
+is the Git/application release version.
+
+```text
+1.1.1-2
+```
+
+is the Docker image created from application version:
+
+```text
+1.1.1
+```
+
+by Jenkins build:
+
+```text
+2
+```
+
+This distinction should be preserved in future projects.
+
+---
+
+## 19.34 Release Completion Checklist
+
+```text
+[✅] develop contained completed implementation
+[✅] documentation merged into develop
+[✅] documentation changes verified as docs-only
+[✅] application version remained 1.1.1
+[✅] develop build succeeded
+[✅] unit test passed
+[✅] main updated through --no-ff merge
+[✅] main and develop file trees matched
+[✅] main release build succeeded
+[✅] working tree remained clean
+[✅] annotated tag v1.1.1 created
+[✅] tag points to bf4290a
+[✅] Jenkins project disabled before remote publication
+[✅] develop pushed to GitHub
+[✅] develop mirrored to GitLab
+[✅] main pushed to GitHub
+[✅] main mirrored to GitLab
+[✅] tag pushed to GitHub
+[✅] tag mirrored to GitLab
+[✅] remote SHAs verified
+[✅] annotated tag dereference verified
+[✅] remote documentation verified
+```
+
+**Phase 19 — Release: COMPLETE**
 
 ---
 
 # 20. Cleanup
 
-To be documented after release verification.
+## 20.1 Objective
+
+Remove project-specific chargeable cloud infrastructure and local generated artifacts after the release and verification evidence have been preserved.
+
+Cleanup must:
+
+```text
+preserve source code
+preserve Git history
+preserve release tag
+preserve runbook/documentation
+preserve reusable Jenkins environment
+```
+
+while removing:
+
+```text
+Kubernetes application resources
+AWS Classic ELB
+EKS nodegroup
+EKS worker EC2
+EKS control plane
+eksctl VPC
+eksctl CloudFormation stacks
+ECR repository/images
+local Maven artifacts
+project-specific local Docker image
+```
+
+---
+
+# Cleanup Principles
+
+## 20.2 Dependency-Safe Cleanup Order
+
+The verified cleanup order was:
+
+```text
+capture final evidence
+        ↓
+delete Kubernetes LoadBalancer Service
+        ↓
+verify Classic ELB deleted
+        ↓
+delete Deployment
+        ↓
+verify Pod / ReplicaSet / EndpointSlice deleted
+        ↓
+capture EKS infrastructure identifiers
+        ↓
+delete EKS cluster with eksctl --wait
+        ↓
+verify nodegroup / ASG / EC2 / VPC / stacks
+        ↓
+capture ECR evidence
+        ↓
+delete ECR repository with --force
+        ↓
+remove local Maven target/
+        ↓
+remove project-specific Docker image
+        ↓
+final AWS resource scan
+```
+
+This order avoids orphaning cloud resources.
+
+---
+
+# Final Pre-Cleanup Evidence
+
+## 20.3 Git Safety State
+
+Before destructive cleanup:
+
+```text
+branch:
+main
+
+upstream:
+github/main
+
+working tree:
+clean
+
+release tag:
+v1.1.1
+
+release commit:
+bf4290a
+```
+
+Run before destructive actions:
+
+```bash
+pwd
+git status
+git branch --show-current
+git remote -v
+```
+
+---
+
+## 20.4 Final Kubernetes Runtime Evidence
+
+Before deletion:
+
+```text
+Deployment:
+java-maven-app
+
+READY:
+1/1
+
+AVAILABLE:
+1
+```
+
+Final image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+Final runtime digest:
+
+```text
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+Pod:
+
+```text
+java-maven-app-6869cd58d7-8xk26
+```
+
+Verified:
+
+```text
+Ready=true
+Restarts=0
+```
+
+---
+
+## 20.5 Final External HTTP Evidence
+
+Final LoadBalancer hostname:
+
+```text
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+```
+
+Final external test:
+
+```text
+HTTP status: 200
+```
+
+Final content:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+---
+
+## 20.6 Capture Classic ELB Identity
+
+Saved:
+
+```text
+ELB name:
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35
+
+scheme:
+internet-facing
+```
+
+Final backend:
+
+```text
+Instance:
+i-03614eaddf6a9d17e
+
+State:
+InService
+```
+
+---
+
+# Kubernetes Application Cleanup
+
+## 20.7 Delete LoadBalancer Service First
+
+### KUBERNETES
+
+Run:
+
+```bash
+kubectl delete service \
+  java-maven-app \
+  --namespace default
+```
+
+Verified:
+
+```text
+service "java-maven-app" deleted from default namespace
+```
+
+Why Service first:
+
+```text
+Kubernetes LoadBalancer Service
+→ owns/provisions AWS Classic ELB
+```
+
+Deleting the Service gives Kubernetes/AWS the opportunity to remove the associated load balancer automatically.
+
+---
+
+## 20.8 Verify Service Is Gone
+
+Run:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  2>&1 || true
+```
+
+Verified:
+
+```text
+Error from server (NotFound):
+services "java-maven-app" not found
+```
+
+---
+
+## 20.9 Verify Classic ELB Deletion
+
+A bounded polling loop was used:
+
+```bash
+for attempt in {1..20}
+do
+  if aws elb describe-load-balancers \
+    --load-balancer-names "$ELB_NAME" \
+    --region ca-central-1 \
+    >/dev/null 2>&1
+  then
+    echo "Attempt ${attempt}: ELB still exists."
+    sleep 15
+  else
+    echo "PASS: Classic ELB has been deleted."
+    break
+  fi
+done
+```
+
+Verified immediately:
+
+```text
+PASS: Classic ELB has been deleted.
+```
+
+AWS lookup returned no matching load balancer.
+
+---
+
+## 20.10 Verify Public Endpoint Is Gone
+
+After Service/ELB deletion:
+
+```text
+curl:
+Could not resolve host
+```
+
+and:
+
+```text
+HTTP status after cleanup: 000
+```
+
+This was expected.
+
+The public endpoint had intentionally been removed.
+
+---
+
+## 20.11 Delete Deployment
+
+Run:
+
+```bash
+kubectl delete deployment \
+  java-maven-app \
+  --namespace default
+```
+
+Verified:
+
+```text
+deployment.apps "java-maven-app" deleted from default namespace
+```
+
+---
+
+## 20.12 Verify Application Resources Are Gone
+
+Deployment:
+
+```text
+NotFound
+```
+
+Pods:
+
+```text
+No resources found in default namespace.
+```
+
+ReplicaSets:
+
+```text
+No resources found in default namespace.
+```
+
+EndpointSlices:
+
+```text
+No resources found in default namespace.
+```
+
+Remaining resources in `default`:
+
+```text
+service/kubernetes
+```
+
+Only the Kubernetes API Service remained.
+
+---
+
+# EKS Infrastructure Inventory Before Deletion
+
+## 20.13 AWS Identity
+
+The cleanup was executed against the same AWS account used for the project.
+
+Account:
+
+```text
+002184382122
+```
+
+Region:
+
+```text
+ca-central-1
+```
+
+---
+
+## 20.14 Verify No Application Load Balancers Remained
+
+Before cluster deletion:
+
+```text
+Classic ELBs:
+none
+
+ALB/NLB:
+none
+
+Ingress resources:
+none
+```
+
+This is important before EKS deletion because load-balancer resources should be removed before tearing down the cluster.
+
+---
+
+## 20.15 Cluster State
+
+Cluster:
+
+```text
+java-maven-eks
+```
+
+Verified before deletion:
+
+```text
+version:
+1.35
+
+status:
+ACTIVE
+
+VPC:
+vpc-06de21d476d9521c8
+
+cluster security group:
+sg-0b0d4c6f07a1e18f7
+```
+
+Subnets:
+
+```text
+subnet-00f4db477e5729c41
+subnet-0450c78a1f7cc907c
+subnet-06f286ae91dddaaee
+subnet-0b0970d8675f0a6ac
+subnet-0b477a569f5fb3db1
+subnet-0eb21555b7eb94fed
+```
+
+---
+
+## 20.16 Nodegroup State
+
+Nodegroup:
+
+```text
+java-maven-nodes
+```
+
+Verified:
+
+```text
+Status:
+ACTIVE
+
+Instance type:
+t3.small
+
+Minimum:
+1
+
+Desired:
+1
+
+Maximum:
+2
+```
+
+Managed nodegroup Auto Scaling Group:
+
+```text
+eks-java-maven-nodes-32d060af-7019-5dc1-c348-bb868e2b68bf
+```
+
+---
+
+## 20.17 Worker Instance
+
+Kubernetes provider ID:
+
+```text
+aws:///ca-central-1b/i-03614eaddf6a9d17e
+```
+
+Worker:
+
+```text
+i-03614eaddf6a9d17e
+```
+
+Before deletion:
+
+```text
+State:
+running
+
+Type:
+t3.small
+
+Private IP:
+192.168.60.182
+
+Public IP:
+16.52.87.108
+
+VPC:
+vpc-06de21d476d9521c8
+```
+
+---
+
+## 20.18 Fargate Profiles
+
+Verified:
+
+```json
+{
+  "fargateProfileNames": []
+}
+```
+
+No Fargate profiles needed separate cleanup.
+
+---
+
+## 20.19 EKS Add-ons
+
+Verified add-ons before deletion:
+
+```text
+coredns
+kube-proxy
+metrics-server
+vpc-cni
+```
+
+They were left for the cluster deletion process to remove.
+
+---
+
+# Historical CloudFormation Query Error
+
+## 20.20 Initial Query Formatting Error
+
+An initial documentation command contained escaped colons inside the JMESPath projection:
+
+```text
+Stack\:StackName
+Status\:StackStatus
+```
+
+AWS CLI rejected it with:
+
+```text
+Bad jmespath expression: Unknown token ?
+```
+
+This was a command-formatting issue.
+
+It did **not** indicate a CloudFormation or cleanup failure.
+
+Correct form:
+
+```bash
+aws cloudformation list-stacks \
+  --region ca-central-1 \
+  --query "StackSummaries[?starts_with(StackName, 'eksctl-java-maven-eks')].[StackName,StackStatus]" \
+  --output table
+```
+
+---
+
+# Delete EKS
+
+## 20.21 Delete Cluster With `eksctl`
+
+### AWS / LOCAL
+
+Run:
+
+```bash
+eksctl delete cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --wait
+```
+
+Key verified output:
+
+```text
+deleting EKS cluster "java-maven-eks"
+
+will drain 0 unmanaged nodegroup(s)
+
+deleted 0 Fargate profile(s)
+
+kubeconfig has been updated
+
+cleaning up AWS load balancers created by Kubernetes objects
+```
+
+`eksctl` then performed two sequential tasks:
+
+```text
+delete nodegroup "java-maven-nodes"
+
+delete cluster control plane "java-maven-eks"
+```
+
+Nodegroup stack:
+
+```text
+eksctl-java-maven-eks-nodegroup-java-maven-nodes
+```
+
+was deleted first.
+
+Cluster stack:
+
+```text
+eksctl-java-maven-eks-cluster
+```
+
+was then deleted.
+
+Final verified output:
+
+```text
+all cluster resources were deleted
+```
+
+---
+
+## 20.22 Verify EKS Cluster Is Gone
+
+Run:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  2>&1 || true
+```
+
+Verified:
+
+```text
+ResourceNotFoundException
+
+No cluster found for name:
+java-maven-eks
+```
+
+`aws eks list-clusters` returned no clusters.
+
+---
+
+## 20.23 Verify Nodegroup Is Gone
+
+Run:
+
+```bash
+aws eks describe-nodegroup \
+  --cluster-name java-maven-eks \
+  --nodegroup-name java-maven-nodes \
+  --region ca-central-1 \
+  2>&1 || true
+```
+
+Verified:
+
+```text
+ResourceNotFoundException
+```
+
+because the parent cluster no longer existed.
+
+---
+
+## 20.24 Verify Auto Scaling Group Is Gone
+
+Querying:
+
+```text
+eks-java-maven-nodes-32d060af-7019-5dc1-c348-bb868e2b68bf
+```
+
+returned:
+
+```text
+no rows
+```
+
+The managed nodegroup ASG had been removed.
+
+---
+
+## 20.25 Verify Worker Instance Termination
+
+Worker:
+
+```text
+i-03614eaddf6a9d17e
+```
+
+post-cleanup state:
+
+```text
+terminated
+```
+
+A terminated EC2 instance can remain visible in AWS inventory history temporarily.
+
+It is no longer a running compute resource.
+
+---
+
+## 20.26 Verify EKS VPC Deletion
+
+Querying:
+
+```text
+vpc-06de21d476d9521c8
+```
+
+returned:
+
+```text
+InvalidVpcID.NotFound
+```
+
+The eksctl-created VPC had been removed.
+
+---
+
+## 20.27 Verify CloudFormation Stack Deletion
+
+Active matching stacks:
+
+```text
+none
+```
+
+Historical stacks:
+
+```text
+eksctl-java-maven-eks-nodegroup-java-maven-nodes
+DELETE_COMPLETE
+
+eksctl-java-maven-eks-cluster
+DELETE_COMPLETE
+```
+
+This provides explicit CloudFormation evidence that both eksctl-managed stacks completed deletion.
+
+---
+
+## 20.28 Verify No Load Balancers Remain
+
+After EKS deletion:
+
+```text
+Classic ELB:
+none
+
+ALB/NLB:
+none
+```
+
+---
+
+# ECR Cleanup
+
+## 20.29 ECR Repository Before Deletion
+
+Repository:
+
+```text
+java-maven-app
+```
+
+Verified configuration:
+
+```text
+URI:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+
+Encryption:
+AES256
+
+Image tag mutability:
+MUTABLE
+
+Scan on push:
+true
+```
+
+---
+
+## 20.30 Preserve Historical Image Evidence
+
+Previously verified project images:
+
+### Rollback image
+
+```text
+tag:
+1.1.1-1
+
+digest:
+sha256:4878a7f7d6b67f10149459944b0f76c07a88d5421f1ee1cb069d53108bc76efe
+```
+
+### Final verified runtime image
+
+```text
+tag:
+1.1.1-2
+
+digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+The final running Pod had already been verified against the `1.1.1-2` ECR digest before cleanup.
+
+---
+
+## 20.31 Historical ECR Table Formatting Error
+
+A cleanup evidence command attempted:
+
+```bash
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --query 'sort_by(imageDetails,&imagePushedAt)[].[
+    imageTags,
+    imageDigest,
+    imagePushedAt,
+    imageSizeInBytes
+  ]' \
+  --output table
+```
+
+AWS CLI returned:
+
+```text
+Row should have 4 elements, instead it has 1
+```
+
+The issue was caused by rendering the nested `imageTags` list using table output.
+
+This did not affect the repository or its images.
+
+For a future rebuild, prefer:
+
+```bash
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --query 'sort_by(imageDetails,&imagePushedAt)[].{
+    Tags:imageTags,
+    Digest:imageDigest,
+    PushedAt:imagePushedAt,
+    SizeBytes:imageSizeInBytes
+  }' \
+  --output json
+```
+
+or:
+
+```text
+--output yaml
+```
+
+when nested values are present.
+
+---
+
+## 20.32 Delete ECR Repository and Images
+
+Run:
+
+```bash
+aws ecr delete-repository \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --force
+```
+
+`--force` deletes the non-empty repository together with its stored images.
+
+Verified response identified:
+
+```text
+repositoryName:
+java-maven-app
+
+registryId:
+002184382122
+
+repositoryUri:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+```
+
+---
+
+## 20.33 Verify ECR Is Gone
+
+Run:
+
+```bash
+aws ecr describe-repositories \
+  --repository-names java-maven-app \
+  --region ca-central-1 \
+  2>&1 || true
+```
+
+Verified:
+
+```text
+RepositoryNotFoundException
+```
+
+The account's ECR repository listing in:
+
+```text
+ca-central-1
+```
+
+was empty after cleanup.
+
+---
+
+# Local Artifact Cleanup
+
+## 20.34 Remove Maven Build Output
+
+Before deletion:
+
+```text
+target/
+size approximately 23 MB
+```
+
+Files:
+
+```text
+target/java-maven-app-1.1.1.jar
+target/java-maven-app-1.1.1.jar.original
+```
+
+Run:
+
+```bash
+rm -rf target
+```
+
+During practical cleanup this command was executed twice.
+
+The second execution had no effect because:
+
+```text
+rm -rf
+```
+
+is idempotent when the target directory no longer exists.
+
+---
+
+## 20.35 Verify Git Remains Clean
+
+Because `target/` is ignored, its removal did not modify tracked Git content.
+
+Expected:
+
+```text
+On branch main
+nothing to commit, working tree clean
+```
+
+---
+
+# Local Docker Cleanup
+
+## 20.36 Inspect Project Containers
+
+Run:
+
+```bash
+docker ps -a \
+  --filter name=java-maven-app \
+  --format 'table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}'
+```
+
+Verified:
+
+```text
+no project containers
+```
+
+The earlier local test container:
+
+```text
+java-maven-app-local
+```
+
+had already been removed during local container testing.
+
+---
+
+## 20.37 Inspect Project Images
+
+Verified remaining local image:
+
+```text
+java-maven-app:1.1.0-SNAPSHOT
+```
+
+Image ID:
+
+```text
+17c5c43f10ae
+```
+
+Observed size:
+
+```text
+492 MB
+```
+
+---
+
+## 20.38 Remove Project-Specific Docker Image
+
+Run:
+
+```bash
+docker image rm \
+  java-maven-app:1.1.0-SNAPSHOT
+```
+
+Verified:
+
+```text
+Untagged:
+java-maven-app:1.1.0-SNAPSHOT
+
+Deleted:
+sha256:17c5c43f10ae81f4c6aed58fd20528117217b5660b5abdad0727cf64eb9d0314
+```
+
+No global:
+
+```text
+docker system prune
+```
+
+was used.
+
+This avoided deleting Docker resources belonging to unrelated projects.
+
+---
+
+## 20.39 Verify Local Docker Cleanup
+
+Verified:
+
+```text
+no project containers
+
+no java-maven-app images
+```
+
+---
+
+# Final AWS Resource Scan
+
+## 20.40 EKS
+
+Run:
+
+```bash
+aws eks list-clusters \
+  --region ca-central-1 \
+  --output table
+```
+
+Verified:
+
+```text
+no clusters
+```
+
+---
+
+## 20.41 ECR
+
+Run:
+
+```bash
+aws ecr describe-repositories \
+  --region ca-central-1 \
+  --query 'repositories[].repositoryName' \
+  --output table
+```
+
+Verified:
+
+```text
+no repositories
+```
+
+for the region/account at that time.
+
+---
+
+## 20.42 Load Balancers
+
+Verified:
+
+```text
+Classic ELB:
+none
+
+ALB/NLB:
+none
+```
+
+---
+
+## 20.43 Auto Scaling Groups
+
+Query:
+
+```bash
+aws autoscaling describe-auto-scaling-groups \
+  --region ca-central-1 \
+  --query "AutoScalingGroups[?contains(AutoScalingGroupName, 'java-maven')].[AutoScalingGroupName,DesiredCapacity]" \
+  --output table
+```
+
+Verified:
+
+```text
+no matching rows
+```
+
+---
+
+## 20.44 Non-Terminated Project Workers
+
+Run:
+
+```bash
+aws ec2 describe-instances \
+  --region ca-central-1 \
+  --filters \
+    "Name=tag:eks:cluster-name,Values=java-maven-eks" \
+    "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+  --query 'Reservations[].Instances[].[
+    InstanceId,
+    State.Name,
+    InstanceType
+  ]' \
+  --output table
+```
+
+Verified:
+
+```text
+no rows
+```
+
+---
+
+## 20.45 VPC
+
+Verified:
+
+```text
+vpc-06de21d476d9521c8
+```
+
+returned:
+
+```text
+InvalidVpcID.NotFound
+```
+
+---
+
+## 20.46 Active CloudFormation Stacks
+
+Correct query:
+
+```bash
+aws cloudformation list-stacks \
+  --region ca-central-1 \
+  --stack-status-filter \
+    CREATE_IN_PROGRESS \
+    CREATE_COMPLETE \
+    UPDATE_IN_PROGRESS \
+    UPDATE_COMPLETE \
+    UPDATE_ROLLBACK_COMPLETE \
+    DELETE_IN_PROGRESS \
+    DELETE_FAILED \
+  --query "StackSummaries[?starts_with(StackName, 'eksctl-java-maven-eks')].[StackName,StackStatus]" \
+  --output table
+```
+
+Verified:
+
+```text
+no active matching stacks
+```
+
+Historical stacks were both:
+
+```text
+DELETE_COMPLETE
+```
+
+---
+
+# Resources Intentionally Preserved
+
+## 20.47 Git Repositories
+
+Preserved:
+
+```text
+GitHub repository
+
+GitLab repository
+```
+
+These contain the permanent project history and cost no cloud compute charges.
+
+---
+
+## 20.48 Permanent Branches
+
+Preserved:
+
+```text
+main
+
+develop
+```
+
+---
+
+## 20.49 Documentation Branch
+
+Preserved during final documentation work:
+
+```text
+docs/complete-project-documentation
+```
+
+It contains the historical documentation construction sequence.
+
+It may be removed later if desired, but deletion is not required for cost control.
+
+---
+
+## 20.50 Release Tag
+
+Preserved permanently:
+
+```text
+v1.1.1
+```
+
+Do not move or force-update this tag after publication.
+
+Its release commit remains:
+
+```text
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+```
+
+---
+
+## 20.51 Jenkins Server
+
+The Jenkins/DigitalOcean environment was intentionally retained because it is reusable for other DevOps work.
+
+The capstone Multibranch Pipeline was left disabled after release/cleanup so it could not attempt to deploy to the now-deleted EKS/ECR infrastructure.
+
+Important:
+
+```text
+If the DigitalOcean Jenkins server is dedicated only to this project,
+it remains a separately chargeable resource and should be deleted.
+
+If it is shared with other projects,
+retain it and remove only this project's Jenkins job/credentials when appropriate.
+```
+
+Do not delete a shared Jenkins server solely because this capstone has been cleaned up.
+
+---
+
+# Cleanup Verification Summary
+
+## 20.52 Final Project Infrastructure State
+
+```text
+Kubernetes Service
+DELETED
+
+AWS Classic ELB
+DELETED
+
+Kubernetes Deployment
+DELETED
+
+Kubernetes Pods
+DELETED
+
+Kubernetes ReplicaSets
+DELETED
+
+Kubernetes EndpointSlice
+DELETED
+
+EKS nodegroup
+DELETED
+
+Nodegroup Auto Scaling Group
+DELETED
+
+EKS worker EC2
+TERMINATED
+
+EKS cluster
+DELETED
+
+eksctl VPC
+DELETED
+
+eksctl cluster CloudFormation stack
+DELETE_COMPLETE
+
+eksctl nodegroup CloudFormation stack
+DELETE_COMPLETE
+
+ECR repository
+DELETED
+
+ECR images
+DELETED with repository
+
+local target/
+DELETED
+
+local java-maven-app Docker image
+DELETED
+```
+
+---
+
+## 20.53 Permanent Project Record
+
+Retained:
+
+```text
+GitHub repository
+✅
+
+GitLab repository
+✅
+
+main
+✅
+
+develop
+✅
+
+v1.1.1
+✅
+
+README.md
+✅
+
+RUNBOOK.md
+✅
+
+architecture documentation
+✅
+
+troubleshooting documentation
+✅
+
+verification evidence
+✅
+
+future improvements
+✅
+
+Jenkins history/environment
+✅ retained intentionally
+```
+
+---
+
+## 20.54 Cleanup Completion Checklist
+
+```text
+[✅] final Git state recorded
+[✅] final deployment image recorded
+[✅] final runtime digest recorded
+[✅] final HTTP 200 recorded
+[✅] final application content recorded
+
+[✅] LoadBalancer Service deleted
+[✅] Classic ELB deletion verified
+[✅] endpoint stopped resolving
+[✅] Deployment deleted
+[✅] Pod deleted
+[✅] ReplicaSets deleted
+[✅] EndpointSlice deleted
+
+[✅] EKS cluster identity captured
+[✅] nodegroup identity captured
+[✅] ASG identity captured
+[✅] EC2 worker identity captured
+[✅] VPC identity captured
+[✅] Fargate state captured
+[✅] add-on state captured
+
+[✅] eksctl cluster deletion completed
+[✅] EKS cluster ResourceNotFound verified
+[✅] nodegroup removal verified
+[✅] ASG removal verified
+[✅] worker termination verified
+[✅] VPC deletion verified
+[✅] CloudFormation DELETE_COMPLETE verified
+[✅] no project load balancers remain
+
+[✅] ECR metadata recorded
+[✅] important image tags/digests preserved in documentation
+[✅] ECR repository deleted with --force
+[✅] RepositoryNotFound verified
+[✅] no remaining ECR repository
+
+[✅] target/ removed
+[✅] local project Docker image removed
+[✅] no project containers remain
+[✅] no project Docker images remain
+
+[✅] Git repositories preserved
+[✅] permanent branches preserved
+[✅] v1.1.1 preserved
+[✅] Jenkins environment intentionally preserved
+```
+
+**Phase 20 — Cleanup: COMPLETE**
+
+---
+
+# Final Project Status
+
+```text
+1. Requirements                    ✅
+2. Repository Setup                ✅
+3. Local Environment               ✅
+4. Application Build               ✅
+5. Automated Tests                 ✅
+6. Artifact Creation               ✅
+7. Containerization                ✅
+8. Local Container Testing         ✅
+9. Pipeline Preparation            ✅
+10. Infrastructure Preparation     ✅
+11. Security Configuration         ✅
+12. Server and Cloud Provisioning  ✅
+13. Deployment                     ✅
+14. Networking                     ✅
+15. Monitoring                     ✅
+16. End-to-End Testing             ✅
+17. Rollback                       ✅
+18. Documentation                  ✅
+19. Release                        ✅
+20. Cleanup                        ✅
+```
+
+# Project Complete
+
+The project has now completed the complete DevOps lifecycle:
+
+```text
+Requirements
+→ Repository Setup
+→ Local Environment
+→ Application Build
+→ Automated Tests
+→ Artifact Creation
+→ Containerization
+→ Local Container Testing
+→ Pipeline Preparation
+→ Infrastructure Preparation
+→ Security Configuration
+→ Server and Cloud Provisioning
+→ Deployment
+→ Networking
+→ Monitoring
+→ End-to-End Testing
+→ Rollback
+→ Documentation
+→ Release
+→ Cleanup
+```
+
+The verified permanent release is:
+
+```text
+Release:
+v1.1.1
+
+Release commit:
+bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+
+Develop integration commit:
+ffde81116a43f7bbd42ed7e139349c4b7120619b
+```
+
+The project infrastructure was intentionally removed after verification, while the complete source, Git history, release tag, documentation and reusable runbook were retained.
+
