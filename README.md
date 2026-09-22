@@ -524,39 +524,50 @@ The documentation set is organized as follows:
 
 ## Project Status
 
-Verified implementation completed through:
+The complete DevOps lifecycle for this project has been implemented, verified, released, documented, and cleaned up.
 
 ```text
-Requirements
-Repository Setup
-Local Environment
-Application Build
-Automated Tests
-Artifact Creation
-Containerization
-Local Container Testing
-Pipeline Preparation
-Infrastructure Preparation
-Security Configuration
-Server and Cloud Provisioning
-Deployment
-Networking
-Monitoring
-End-to-End Testing
-Rollback
+Requirements                         ✅ Complete
+Repository Setup                     ✅ Complete
+Local Environment                    ✅ Complete
+Application Build                    ✅ Complete
+Automated Tests                      ✅ Complete
+Artifact Creation                    ✅ Complete
+Containerization                     ✅ Complete
+Local Container Testing              ✅ Complete
+Pipeline Preparation                 ✅ Complete
+Infrastructure Preparation           ✅ Complete
+Security Configuration               ✅ Complete
+Server and Cloud Provisioning        ✅ Complete
+Deployment                           ✅ Complete
+Networking                           ✅ Complete
+Monitoring                           ✅ Complete
+End-to-End Testing                   ✅ Complete
+Rollback                             ✅ Complete
+Documentation                        ✅ Complete
+Release                              ✅ Complete
+Cleanup                              ✅ Complete
 ```
 
-Documentation is being finalized on:
+### Final Release
 
 ```text
-docs/complete-project-documentation
+Release:          v1.1.1
+Release Commit:   bf4290a9e29f9c6f74d6bcd666a093b2be219c1f
+Develop Commit:   ffde81116a43f7bbd42ed7e139349c4b7120619b
+Application:      1.1.1
+Final ECR Image:  1.1.1-2
 ```
 
-Release and infrastructure cleanup are handled as the final controlled project phases.
+The release was published and verified on both GitHub and GitLab before the project-specific cloud infrastructure was removed.
+
+Detailed implementation, troubleshooting, verification, release, rollback, and cleanup procedures are preserved in `RUNBOOK.md`.
+
+---
 
 ## Important Cost Note
 
-The project uses chargeable cloud infrastructure, including resources such as:
+This project used chargeable cloud infrastructure during implementation and testing, including:
 
 ```text
 DigitalOcean Jenkins server
@@ -566,10 +577,34 @@ AWS load balancer
 Amazon ECR storage
 ```
 
-See the cleanup section of `RUNBOOK.md` before leaving training infrastructure running unnecessarily.
+After final verification and release, the project-specific AWS infrastructure was cleaned up, including:
+
+```text
+Kubernetes application resources
+AWS Classic Load Balancer
+Amazon EKS cluster
+EKS managed nodegroup
+EC2 EKS worker
+eksctl-created VPC
+eksctl CloudFormation stacks
+Amazon ECR repository and images
+```
+
+The reusable DigitalOcean Jenkins environment was intentionally retained for other DevOps projects. If that Jenkins server is no longer needed, it should be removed separately to avoid unnecessary cloud charges.
+
+See the **Cleanup** section of `RUNBOOK.md` for the complete verified cleanup procedure and evidence.
+
+---
 
 ## Author
 
-Gafari Salaudeen
-
+**Gafari Salaudeen**
 DevOps / Cloud Engineering Portfolio Project
+
+### Project Repositories
+
+**GitHub:**
+https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr
+
+**GitLab:**
+https://gitlab.com/devops-engineering-projects/complete-jenkins-cicd-pipeline-eks-ecr
