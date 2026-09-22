@@ -12121,9 +12121,2086 @@ The project can now move to actual server and cloud resource creation.
 
 # 12. Server and Cloud Provisioning
 
-To be documented in a later verified documentation batch.
+## 12.1 Objective
 
-Where original provisioning commands cannot be recovered verbatim, this phase will provide a reproducible implementation matching the verified infrastructure state.
+Provision the real runtime infrastructure required by the CI/CD project after local preparation and security configuration are complete.
+
+The authoritative project sequence is:
+
+```text
+security configuration
+→ server and cloud provisioning
+→ deployment
+```
+
+This phase creates and prepares:
+
+```text
+DigitalOcean Jenkins server
+→ Docker runtime
+→ Jenkins container
+→ persistent Jenkins storage
+→ Docker access from Jenkins
+→ Maven/Jenkins tools
+→ AWS CLI
+→ kubectl
+→ EKS authentication support
+→ envsubst
+→ Jenkins kubeconfig
+→ AWS ECR repository
+→ Amazon EKS cluster
+→ managed EKS nodegroup
+```
+
+Creating the server and AWS infrastructure may generate real charges.
+
+Do not provision resources until the project files, pipeline, security plan, verification plan, rollback plan, and cleanup commands are understood.
+
+---
+
+## 12.2 Phase 12 Is Split into Two Parts
+
+Part 1:
+
+```text
+DigitalOcean
+→ Docker
+→ Jenkins
+→ Docker access
+→ Jenkins initialization
+→ Jenkins runtime tools
+→ kubectl
+→ AWS/EKS authentication
+→ kubeconfig
+→ envsubst
+```
+
+Part 2:
+
+```text
+Amazon ECR
+→ EKS cluster
+→ managed nodegroup
+→ kubeconfig/context verification
+→ cluster connectivity
+→ Jenkins-to-EKS verification
+→ final infrastructure comparison
+```
+
+Phase 12 is not complete until both parts have been verified.
+
+---
+
+# DigitalOcean Jenkins Server
+
+## 12.3 Nana's Original Jenkins Hosting Model
+
+TechWorld with Nana runs Jenkins on a separate DigitalOcean Droplet.
+
+Architecture:
+
+```text
+Developer Mac
+      │
+      │ SSH / browser
+      ▼
+DigitalOcean Droplet
+      │
+      ├── Docker daemon
+      │
+      └── Jenkins container
+              │
+              ├── Jenkins jobs
+              ├── credentials
+              ├── plugins
+              ├── Maven
+              ├── Docker CLI
+              ├── AWS CLI
+              ├── kubectl
+              ├── envsubst
+              └── kubeconfig
+```
+
+The Jenkins application itself runs as a Docker container rather than being installed directly on the Ubuntu host.
+
+---
+
+## 12.4 DigitalOcean Droplet Details
+
+The relevant Nana notes confirm:
+
+```text
+Cloud provider:
+DigitalOcean
+
+Operating system:
+Ubuntu
+
+Purpose:
+Dedicated Jenkins server
+```
+
+The exact original capstone Droplet plan, datacenter, CPU size, and memory specification are not recoverable from the relevant capstone/Nana notes.
+
+Record this accurately as:
+
+```text
+Original detail currently unavailable.
+```
+
+Do not substitute the specifications from another unrelated exercise and present them as this project's historical configuration.
+
+For a rebuild, select a Linux Droplet with enough memory and CPU to run:
+
+```text
+Jenkins
+Maven
+Java build
+Docker image build
+AWS CLI
+kubectl
+```
+
+without resource exhaustion.
+
+---
+
+## 12.5 Cost Warning — DigitalOcean
+
+A DigitalOcean Droplet is chargeable while it exists.
+
+Before creating it, remember:
+
+```text
+Jenkins server:
+chargeable
+
+AWS EKS:
+chargeable
+
+EC2 worker:
+chargeable
+
+AWS load balancer later:
+chargeable
+```
+
+The Jenkins Droplet may be shared with other learning projects.
+
+Therefore:
+
+```text
+do not automatically delete Jenkins
+during this capstone cleanup
+```
+
+without first checking whether other projects depend on it.
+
+---
+
+## 12.6 Connect to the Jenkins Server
+
+Nana's original method used root SSH access to the training Droplet:
+
+```bash
+ssh root@<JENKINS_SERVER_IP>
+```
+
+Expected result:
+
+```text
+Ubuntu shell on DigitalOcean server
+```
+
+Verify:
+
+```bash
+hostname
+
+whoami
+
+uname -a
+```
+
+During Nana's training:
+
+```text
+user:
+root
+```
+
+was commonly used for server administration.
+
+A future hardened server should use a dedicated administrative user with sudo rather than routine root SSH access.
+
+---
+
+## 12.7 Update the Ubuntu Server
+
+Nana's simple training setup begins with:
+
+```bash
+apt update
+```
+
+A reproducible server setup should also apply available upgrades before installing project tooling:
+
+```bash
+apt update
+apt upgrade -y
+```
+
+This runs on:
+
+```text
+DIGITALOCEAN HOST
+```
+
+not inside Jenkins.
+
+---
+
+# Docker on DigitalOcean
+
+## 12.8 Nana's Original Docker Installation
+
+The original Jenkins training used the straightforward Ubuntu package:
+
+```bash
+apt install docker.io
+```
+
+Verify:
+
+```bash
+docker --version
+
+docker ps
+```
+
+The learning objective is:
+
+```text
+DigitalOcean host
+→ Docker daemon available
+```
+
+The Docker daemon remains on the host.
+
+Jenkins later communicates with that daemon through:
+
+```text
+/var/run/docker.sock
+```
+
+---
+
+## 12.9 Current Package-Management Improvement
+
+A later rebuild can install Docker using Docker's maintained Ubuntu package repository.
+
+However, that is an implementation modernization rather than Nana's original training command.
+
+Preserve the distinction:
+
+```text
+NANA ORIGINAL METHOD
+apt install docker.io
+
+LATER PRODUCTION/MAINTENANCE OPTION
+Docker official Ubuntu repository
+```
+
+Do not silently replace Nana's teaching sequence in the historical section.
+
+---
+
+# Jenkins Persistent Storage
+
+## 12.10 Create Jenkins Volume
+
+Create the persistent Docker volume:
+
+```bash
+docker volume create jenkins_home
+```
+
+Verify:
+
+```bash
+docker volume ls
+```
+
+Expected:
+
+```text
+jenkins_home
+```
+
+---
+
+## 12.11 Why `jenkins_home` Is Critical
+
+Jenkins stores important state under:
+
+```text
+/var/jenkins_home
+```
+
+including:
+
+```text
+jobs
+plugins
+users
+credentials
+configuration
+build metadata
+workspaces
+```
+
+The volume mapping is:
+
+```text
+jenkins_home
+        │
+        ▼
+/var/jenkins_home
+```
+
+This means the Jenkins container can be replaced without destroying its persistent Jenkins configuration.
+
+---
+
+## 12.12 Container vs Volume
+
+Core Docker principle from Nana's lesson:
+
+```text
+container
+→ replaceable
+
+jenkins_home volume
+→ persistent state
+```
+
+Removing only the Jenkins container should not erase:
+
+```text
+jobs
+plugins
+users
+credentials
+```
+
+as long as:
+
+```text
+jenkins_home
+```
+
+is preserved.
+
+Deleting the volume is destructive.
+
+---
+
+# Initial Jenkins Container
+
+## 12.13 Nana's Initial Jenkins Container Command
+
+Original training structure:
+
+```bash
+docker run \
+  -p 8080:8080 \
+  -p 50000:50000 \
+  -d \
+  -v jenkins_home:/var/jenkins_home \
+  jenkins/jenkins:lts
+```
+
+The important elements are:
+
+```text
+8080
+→ Jenkins web UI
+
+50000
+→ inbound Jenkins agent communication
+
+-d
+→ detached mode
+
+jenkins_home
+→ persistent Jenkins state
+```
+
+---
+
+## 12.14 Java Runtime for This Capstone
+
+This application is Java 17 based.
+
+A reproducible Jenkins container can therefore use:
+
+```text
+jenkins/jenkins:lts-jdk17
+```
+
+Example:
+
+```bash
+docker run -d \
+  --name jenkins \
+  --restart unless-stopped \
+  --publish 8080:8080 \
+  --publish 50000:50000 \
+  --volume jenkins_home:/var/jenkins_home \
+  jenkins/jenkins:lts-jdk17
+```
+
+This is a reproducible adaptation for the verified Java 17 project.
+
+The exact initial historical Jenkins image tag used when the user's original server was first created is not required to reproduce the final pipeline behavior.
+
+---
+
+## 12.15 Verify Jenkins Container
+
+Run on the DigitalOcean host:
+
+```bash
+docker ps
+```
+
+Expected:
+
+```text
+Jenkins container
+running
+port 8080 published
+```
+
+Inspect:
+
+```bash
+docker ps \
+  --filter name=jenkins
+```
+
+---
+
+# Jenkins Initialization
+
+## 12.16 Retrieve Initial Jenkins Password
+
+Inside the container:
+
+```bash
+docker exec -it jenkins bash
+```
+
+Then:
+
+```bash
+cat \
+  /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Or directly from the host:
+
+```bash
+docker exec jenkins \
+  cat /var/jenkins_home/secrets/initialAdminPassword
+```
+
+Do not publish this password in screenshots.
+
+---
+
+## 12.17 Open Jenkins
+
+Browser:
+
+```text
+http://<JENKINS_SERVER_IP>:8080
+```
+
+Nana's initialization sequence:
+
+```text
+Unlock Jenkins
+→ Install suggested plugins
+→ Create admin user
+→ Open dashboard
+```
+
+The suggested plugins include foundational functionality such as Git, Pipeline, and Credentials support.
+
+---
+
+## 12.18 Jenkins Port Security
+
+The simple training setup exposes:
+
+```text
+8080
+```
+
+for the Jenkins web interface.
+
+Future production hardening should use:
+
+```text
+HTTPS
+reverse proxy
+domain
+restricted network access
+```
+
+rather than relying permanently on:
+
+```text
+http://IP:8080
+```
+
+This is intentionally not introduced into the basic capstone implementation.
+
+---
+
+# Docker From Inside Jenkins
+
+## 12.19 Why Jenkins Needs Docker
+
+The pipeline performs:
+
+```text
+Maven package
+→ Docker build
+→ Docker login
+→ Docker push
+```
+
+Therefore the Jenkins environment must be able to execute Docker commands.
+
+Initially:
+
+```text
+Docker daemon:
+DigitalOcean host
+
+Jenkins:
+container
+```
+
+The Jenkins container cannot automatically access the host Docker daemon.
+
+---
+
+## 12.20 Nana's Docker-Outside-of-Docker Method
+
+Nana mounts:
+
+```text
+/var/run/docker.sock
+```
+
+from the host into the Jenkins container.
+
+Architecture:
+
+```text
+Jenkins container
+      │
+      │ Docker CLI
+      ▼
+/var/run/docker.sock
+      │
+      ▼
+DigitalOcean host Docker daemon
+```
+
+This is commonly called:
+
+```text
+Docker-outside-of-Docker
+```
+
+rather than running another Docker daemon inside Jenkins.
+
+---
+
+## 12.21 Recreate Jenkins With Docker Socket
+
+Before recreating:
+
+```bash
+docker ps
+
+docker volume ls
+```
+
+Confirm:
+
+```text
+jenkins_home exists
+```
+
+Stop:
+
+```bash
+docker stop jenkins
+```
+
+Remove only the container:
+
+```bash
+docker rm jenkins
+```
+
+Do **not** remove:
+
+```text
+jenkins_home
+```
+
+Then recreate:
+
+```bash
+docker run -d \
+  --name jenkins \
+  --restart unless-stopped \
+  --publish 8080:8080 \
+  --publish 50000:50000 \
+  --volume jenkins_home:/var/jenkins_home \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  jenkins/jenkins:lts-jdk17
+```
+
+Verify:
+
+```bash
+docker ps \
+  --filter name=jenkins
+```
+
+Jenkins should retain its previous persistent configuration because the same `jenkins_home` volume is mounted.
+
+---
+
+## 12.22 Docker CLI Is Also Required
+
+Mounting:
+
+```text
+/var/run/docker.sock
+```
+
+gives access to the host Docker daemon.
+
+It does not automatically guarantee the command:
+
+```bash
+docker
+```
+
+exists inside the Jenkins container.
+
+The Jenkins runtime must therefore also contain the Docker CLI.
+
+Nana's training installed/made Docker available inside the Jenkins environment before testing:
+
+```bash
+docker pull redis
+```
+
+and later:
+
+```bash
+docker build
+docker login
+docker push
+```
+
+---
+
+## 12.23 Nana's Historical Docker-Socket Permission Method
+
+After mounting the socket, Nana entered Jenkins as root:
+
+```bash
+docker exec \
+  -u 0 \
+  -it jenkins \
+  bash
+```
+
+or equivalently:
+
+```bash
+docker exec \
+  -it \
+  -u root \
+  jenkins \
+  bash
+```
+
+Inspect:
+
+```bash
+ls -l \
+  /var/run/docker.sock
+```
+
+Nana's demo then used:
+
+```bash
+chmod 666 \
+  /var/run/docker.sock
+```
+
+to grant read/write access to everyone so the Jenkins user could execute Docker commands.
+
+Verify:
+
+```bash
+ls -l \
+  /var/run/docker.sock
+```
+
+Then test as Jenkins:
+
+```bash
+exit
+
+docker exec \
+  -it \
+  jenkins \
+  bash
+```
+
+Inside:
+
+```bash
+docker pull redis
+```
+
+or preferably for this project:
+
+```bash
+docker version
+```
+
+---
+
+## 12.24 Security Warning — `chmod 666`
+
+This is Nana's **training/demo solution**.
+
+It makes the Docker socket writable by every local user with access to the socket.
+
+Docker socket access effectively provides high control over the host.
+
+Therefore:
+
+```text
+chmod 666 /var/run/docker.sock
+```
+
+is preserved here because it is part of Nana's original learning method, but it should not be presented as the preferred production configuration.
+
+---
+
+## 12.25 Simple Safer Improvement
+
+A safer Docker-socket approach is to preserve group-based access instead of world read/write access.
+
+On the DigitalOcean host:
+
+```bash
+getent group docker
+```
+
+Capture the group ID:
+
+```bash
+export DOCKER_GID="$(
+  getent group docker \
+  | cut -d: -f3
+)"
+```
+
+Then recreate Jenkins with:
+
+```bash
+--group-add "${DOCKER_GID}"
+```
+
+Example:
+
+```bash
+docker run -d \
+  --name jenkins \
+  --restart unless-stopped \
+  --publish 8080:8080 \
+  --publish 50000:50000 \
+  --group-add "${DOCKER_GID}" \
+  --volume jenkins_home:/var/jenkins_home \
+  --volume /var/run/docker.sock:/var/run/docker.sock \
+  jenkins/jenkins:lts-jdk17
+```
+
+This is a later security improvement.
+
+Do not mislabel it as Nana's original `chmod 666` method.
+
+---
+
+# Jenkins Maven
+
+## 12.26 Maven Configuration
+
+The pipeline contains:
+
+```groovy
+tools {
+    maven 'Maven'
+}
+```
+
+Jenkins must therefore have a Maven tool named exactly:
+
+```text
+Maven
+```
+
+Configure:
+
+```text
+Manage Jenkins
+→ Tools
+→ Maven installations
+→ Add Maven
+```
+
+Name:
+
+```text
+Maven
+```
+
+Verify later through the pipeline:
+
+```text
+Declarative: Tool Install
+```
+
+followed by successful Maven commands.
+
+---
+
+# EKS Tooling Inside Jenkins
+
+## 12.27 Nana's EKS Jenkins Prerequisites
+
+The EKS deployment lesson identifies four requirements:
+
+```text
+kubectl
+AWS IAM authentication tool
+kubeconfig
+AWS credentials
+```
+
+The current capstone additionally requires:
+
+```text
+AWS CLI
+envsubst
+Docker CLI
+```
+
+because the final shared library explicitly runs:
+
+```text
+aws ecr get-login-password
+envsubst
+kubectl
+docker
+```
+
+---
+
+# kubectl
+
+## 12.28 Enter Jenkins Container as Root
+
+From DigitalOcean:
+
+```bash
+docker ps
+```
+
+Then:
+
+```bash
+docker exec \
+  -it \
+  -u root \
+  jenkins \
+  bash
+```
+
+Nana entered as root because installing binaries under:
+
+```text
+/usr/local/bin
+```
+
+requires elevated permissions.
+
+---
+
+## 12.29 Nana's kubectl Installation
+
+Recovered command:
+
+```bash
+curl -LO \
+  https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+
+chmod +x ./kubectl
+
+mv ./kubectl \
+  /usr/local/bin/kubectl
+```
+
+The training sometimes used this as a combined command:
+
+```bash
+curl -LO https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl; \
+chmod +x ./kubectl; \
+mv ./kubectl /usr/local/bin/kubectl
+```
+
+Verify:
+
+```bash
+kubectl version --client
+```
+
+At this point the command can exist even before Jenkins has authenticated to a cluster.
+
+---
+
+## 12.30 kubectl Version Compatibility
+
+For a rebuild, use a `kubectl` version compatible with the EKS cluster.
+
+Verified cluster:
+
+```text
+Kubernetes:
+1.35
+```
+
+The exact original `kubectl` patch version installed inside Jenkins is not required by the assignment and was not captured as a fixed project requirement.
+
+---
+
+# AWS IAM Authenticator — Nana Method
+
+## 12.31 Nana's Historical AWS IAM Authenticator Installation
+
+Recovered training command:
+
+```bash
+curl -Lo aws-iam-authenticator \
+  https://github.com/kubernetes-sigs/aws-iam-authenticator/releases/download/v0.6.11/aws-iam-authenticator_0.6.11_linux_amd64
+
+chmod +x ./aws-iam-authenticator
+
+mv ./aws-iam-authenticator \
+  /usr/local/bin
+```
+
+Verify:
+
+```bash
+aws-iam-authenticator help
+```
+
+This preserves Nana's EKS lesson.
+
+---
+
+## 12.32 Important Capstone Authentication Distinction
+
+The final capstone must not be described as depending exclusively on the old authenticator binary.
+
+The confirmed EKS-deployment failure showed that the deployment path needed AWS credentials available while Kubernetes authentication occurred.
+
+The final fix bound:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_REGION
+```
+
+during the Deploy stage.
+
+Therefore the reusable capstone requirement is:
+
+```text
+AWS CLI authentication available to kubectl/EKS
+```
+
+not merely:
+
+```text
+aws-iam-authenticator binary exists
+```
+
+Nana's authenticator installation is preserved as the historical training method.
+
+---
+
+# AWS CLI
+
+## 12.33 Why AWS CLI Is Required Inside Jenkins
+
+The final shared library explicitly executes:
+
+```bash
+aws ecr get-login-password
+```
+
+and EKS authentication can require:
+
+```bash
+aws eks get-token
+```
+
+Therefore:
+
+```text
+aws
+```
+
+must exist inside the Jenkins runtime.
+
+---
+
+## 12.34 Original AWS CLI Installation Command
+
+The exact original capstone command used to install AWS CLI inside the existing Jenkins container is not recoverable verbatim from the relevant history.
+
+Record:
+
+```text
+Original detail currently unavailable.
+```
+
+Do not invent an exact historical command.
+
+---
+
+## 12.35 Reproducible AWS CLI Installation
+
+Inside the Jenkins container as root:
+
+```bash
+apt-get update
+
+apt-get install -y \
+  curl \
+  unzip
+```
+
+Download AWS CLI v2:
+
+```bash
+curl \
+  "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" \
+  -o "/tmp/awscliv2.zip"
+```
+
+Extract:
+
+```bash
+unzip \
+  /tmp/awscliv2.zip \
+  -d /tmp
+```
+
+Install:
+
+```bash
+/tmp/aws/install
+```
+
+Cleanup:
+
+```bash
+rm -rf \
+  /tmp/aws \
+  /tmp/awscliv2.zip
+```
+
+Verify:
+
+```bash
+aws --version
+```
+
+This is the reproducible implementation required by the final shared-library behavior.
+
+---
+
+# envsubst
+
+## 12.36 Why `envsubst` Is Required
+
+The Kubernetes manifests contain:
+
+```text
+${APP_NAME}
+${IMAGE_NAME}
+${IMAGE_TAG}
+```
+
+The shared library performs:
+
+```bash
+envsubst \
+  < kubernetes/deployment.yaml \
+  | kubectl apply -f -
+```
+
+and the same for the Service.
+
+Therefore Jenkins requires:
+
+```text
+envsubst
+```
+
+---
+
+## 12.37 Nana's `envsubst` Installation
+
+Nana explicitly entered the Jenkins container as root and installed:
+
+```bash
+apt-get update
+
+apt-get install -y \
+  gettext-base
+```
+
+`gettext-base` provides:
+
+```text
+envsubst
+```
+
+Verify:
+
+```bash
+command -v envsubst
+
+envsubst --version
+```
+
+---
+
+# Verify Jenkins Runtime Tools
+
+## 12.38 Tool Verification
+
+While inside Jenkins:
+
+```bash
+echo "===== Java ====="
+java -version
+
+echo
+echo "===== Git ====="
+git --version
+
+echo
+echo "===== Maven ====="
+mvn --version || true
+
+echo
+echo "===== Docker ====="
+docker --version
+
+echo
+echo "===== AWS CLI ====="
+aws --version
+
+echo
+echo "===== kubectl ====="
+kubectl version --client
+
+echo
+echo "===== envsubst ====="
+envsubst --version
+```
+
+If Maven is managed entirely through Jenkins Tools, the shell's system Maven installation may differ from the pipeline-provided Maven.
+
+The pipeline verification is authoritative for the Jenkins Maven tool.
+
+---
+
+# Jenkins Kubeconfig
+
+## 12.39 Why Jenkins Needs Its Own Kubeconfig
+
+Your Mac kubeconfig:
+
+```text
+~/.kube/config
+```
+
+belongs to the local machine.
+
+Jenkins runs:
+
+```text
+inside a Docker container
+on DigitalOcean
+```
+
+so it requires its own Kubernetes connection configuration.
+
+Nana explicitly created a separate Jenkins kubeconfig.
+
+---
+
+## 12.40 Nana's Manual Kubeconfig Method
+
+The original lesson created a file named:
+
+```text
+config
+```
+
+on the DigitalOcean host.
+
+The file contained:
+
+```text
+cluster name
+EKS API server
+certificate-authority-data
+authentication exec configuration
+```
+
+The exact original generic YAML in Nana's notes was not preserved completely enough to claim an exact file.
+
+Do not invent the missing original file.
+
+---
+
+## 12.41 Current Reproducible Kubeconfig Method
+
+For the capstone, use AWS CLI to generate the current kubeconfig structure rather than manually copying old authentication syntax:
+
+```bash
+aws eks update-kubeconfig \
+  --name java-maven-eks \
+  --region ca-central-1
+```
+
+When this runs as the Jenkins user, the default path becomes:
+
+```text
+/var/jenkins_home/.kube/config
+```
+
+This method also aligns with the final authentication behavior that required AWS credentials during `kubectl` execution.
+
+The cluster must already exist before this command can succeed.
+
+Therefore actual generation will be completed after EKS creation in Phase 12 Part 2.
+
+---
+
+## 12.42 Nana's Manual Copy Workflow
+
+The original training workflow is preserved for reconstruction.
+
+Inside Jenkins:
+
+```bash
+cd ~
+
+pwd
+```
+
+Expected:
+
+```text
+/var/jenkins_home
+```
+
+Create:
+
+```bash
+mkdir -p \
+  ~/.kube
+```
+
+Exit:
+
+```bash
+exit
+```
+
+From the DigitalOcean host:
+
+```bash
+docker cp \
+  config \
+  jenkins:/var/jenkins_home/.kube/config
+```
+
+Nana originally used the container ID rather than the fixed name:
+
+```bash
+docker cp \
+  config \
+  <container-id>:/var/jenkins_home/.kube/config
+```
+
+---
+
+## 12.43 Secure Kubeconfig Permissions
+
+Inside Jenkins as root:
+
+```bash
+chown -R \
+  jenkins:jenkins \
+  /var/jenkins_home/.kube
+```
+
+Then:
+
+```bash
+chmod 700 \
+  /var/jenkins_home/.kube
+
+chmod 600 \
+  /var/jenkins_home/.kube/config
+```
+
+This prevents the file from becoming world-readable.
+
+---
+
+## 12.44 Verify Kubeconfig Exists Safely
+
+Do **not** paste the entire kubeconfig into project documentation.
+
+Verify metadata instead:
+
+```bash
+ls -ld \
+  /var/jenkins_home/.kube
+
+ls -l \
+  /var/jenkins_home/.kube/config
+```
+
+Then:
+
+```bash
+kubectl config current-context
+```
+
+after the cluster has been created and authentication works.
+
+---
+
+# Jenkins AWS Credentials
+
+## 12.45 Create `aws_ecr_creds`
+
+Browser:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Credentials
+→ System
+→ Global credentials
+→ Add Credentials
+```
+
+Current implementation:
+
+```text
+Kind:
+Username with password
+
+Username:
+<AWS_ACCESS_KEY_ID>
+
+Password:
+<AWS_SECRET_ACCESS_KEY>
+
+ID:
+aws_ecr_creds
+```
+
+Never place these values in the runbook.
+
+---
+
+## 12.46 Create `github-token`
+
+Browser:
+
+```text
+Jenkins
+→ Manage Jenkins
+→ Credentials
+→ System
+→ Global credentials
+→ Add Credentials
+```
+
+Configuration:
+
+```text
+Kind:
+Username with password
+
+Username:
+<GITHUB_USERNAME>
+
+Password:
+<GITHUB_PERSONAL_ACCESS_TOKEN>
+
+ID:
+github-token
+```
+
+The verified application checkout later reported:
+
+```text
+using credential github-token
+```
+
+---
+
+# Jenkins Plugins
+
+## 12.47 Plugin Baseline
+
+Initial Jenkins setup:
+
+```text
+Install suggested plugins
+```
+
+Then ensure the project-required capabilities are available, including:
+
+```text
+Pipeline
+Git
+GitHub Branch Source
+Credentials Binding
+Ignore Committer Strategy
+```
+
+Depending on the Jenkins installation, some dependencies are installed automatically.
+
+Do not install unrelated plugins only to make the environment look more complex.
+
+---
+
+# Provisioning Verification
+
+## 12.48 Jenkins Host Verification
+
+On DigitalOcean host:
+
+```bash
+echo "===== Docker Host ====="
+docker version
+
+echo
+echo "===== Jenkins Container ====="
+docker ps \
+  --filter name=jenkins
+
+echo
+echo "===== Jenkins Volume ====="
+docker volume ls \
+  --filter name=jenkins_home
+```
+
+Expected:
+
+```text
+Docker running
+Jenkins running
+jenkins_home present
+```
+
+---
+
+## 12.49 Jenkins Container Tool Verification
+
+Run:
+
+```bash
+docker exec \
+  jenkins \
+  bash -lc '
+    echo "===== Java ====="
+    java -version
+
+    echo
+    echo "===== Git ====="
+    git --version
+
+    echo
+    echo "===== Docker ====="
+    docker --version
+
+    echo
+    echo "===== AWS CLI ====="
+    aws --version
+
+    echo
+    echo "===== kubectl ====="
+    kubectl version --client
+
+    echo
+    echo "===== envsubst ====="
+    envsubst --version
+  '
+```
+
+Do not print environment variables containing credentials.
+
+---
+
+## 12.50 Jenkins Docker Access Verification
+
+Test:
+
+```bash
+docker exec \
+  jenkins \
+  docker version
+```
+
+Both:
+
+```text
+Client
+Server
+```
+
+information should be available if the Jenkins container can communicate with the host Docker daemon.
+
+If only the client is available and the daemon connection fails, inspect:
+
+```bash
+ls -l \
+  /var/run/docker.sock
+```
+
+and the container's group/socket configuration.
+
+---
+
+## 12.51 Do Not Use Docker Socket Failure as a Reason to Expose It Globally
+
+Nana's:
+
+```bash
+chmod 666 /var/run/docker.sock
+```
+
+is preserved as the original learning method.
+
+For a rebuild, prefer fixing:
+
+```text
+group membership
+group ID
+socket ownership
+container group access
+```
+
+rather than permanently giving all users host Docker control.
+
+---
+
+# Persistence Limitation
+
+## 12.52 Manually Installing Tools Inside Jenkins Container
+
+Commands such as:
+
+```bash
+apt-get install
+curl ...
+mv ... /usr/local/bin
+```
+
+modify the current running container filesystem.
+
+If that container is deleted and recreated from the original Jenkins image:
+
+```text
+those manually installed binaries may disappear
+```
+
+while:
+
+```text
+/var/jenkins_home
+```
+
+persists.
+
+This is an important limitation of Nana's simple learning method.
+
+---
+
+## 12.53 Future Reproducible Jenkins Image
+
+A later production improvement is to build a custom Jenkins image containing:
+
+```text
+AWS CLI
+kubectl
+Docker CLI
+envsubst
+other required command-line tools
+```
+
+This makes the Jenkins runtime reproducible.
+
+For this capstone, keep that as:
+
+```text
+Future production improvement
+```
+
+rather than making it a requirement of Nana's basic implementation.
+
+---
+
+# Server Security Notes
+
+## 12.54 Do Not Store AWS Credentials in the Container Image
+
+Never place:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+GitHub PAT
+```
+
+in a custom Jenkins Dockerfile.
+
+Secrets belong in:
+
+```text
+Jenkins Credentials
+```
+
+not Docker image layers.
+
+---
+
+## 12.55 Do Not Commit Jenkins Kubeconfig
+
+Never copy:
+
+```text
+/var/jenkins_home/.kube/config
+```
+
+into:
+
+```text
+application repository
+shared-library repository
+```
+
+The repository `.gitignore` already excludes local kubeconfig-style files.
+
+---
+
+## 12.56 Server Network Security
+
+The Jenkins server must allow the access required for:
+
+```text
+SSH administration
+Jenkins browser/webhook access
+GitHub
+AWS APIs
+ECR
+EKS Kubernetes API
+```
+
+Avoid opening unrelated inbound ports.
+
+Port:
+
+```text
+50000
+```
+
+is not necessary for this project unless inbound Jenkins agents are being used.
+
+Nana exposed it in the original training Jenkins command for future worker communication.
+
+For a hardened rebuild, do not expose it publicly unless needed.
+
+---
+
+# Part 1 Cost Review
+
+## 12.57 Chargeable Resource Created
+
+At this point:
+
+```text
+DigitalOcean Jenkins Droplet
+✅ real chargeable resource
+```
+
+The following AWS resources should not yet be marked complete from Part 1:
+
+```text
+ECR repository
+EKS cluster
+managed nodegroup
+Kubernetes LoadBalancer
+```
+
+These are handled in Part 2.
+
+---
+
+# Evidence to Capture
+
+## 12.58 Part 1 Evidence
+
+Capture:
+
+```text
+DigitalOcean Jenkins server running
+
+docker --version on host
+
+jenkins_home volume
+
+Jenkins container running
+
+port 8080 mapping
+
+Jenkins UI accessible
+
+Docker socket mounted
+
+Docker command works from Jenkins
+
+kubectl version --client
+
+aws --version
+
+envsubst --version
+
+Jenkins Maven tool named Maven
+
+credential IDs:
+github-token
+aws_ecr_creds
+
+.kube directory location
+without exposing kubeconfig contents
+```
+
+Never capture:
+
+```text
+initial Jenkins password after setup
+AWS Secret Access Key
+GitHub PAT
+private keys
+full kubeconfig
+```
+
+---
+
+# Troubleshooting
+
+## 12.59 Jenkins Container Missing After Docker Restart
+
+Check:
+
+```bash
+docker ps
+
+docker ps -a
+```
+
+If Jenkins is stopped:
+
+```bash
+docker start jenkins
+```
+
+Verify:
+
+```bash
+docker ps \
+  --filter name=jenkins
+```
+
+---
+
+## 12.60 Jenkins Data Appears Missing
+
+Stop.
+
+Do not initialize a new Jenkins environment immediately.
+
+Check:
+
+```bash
+docker volume ls
+
+docker inspect jenkins
+```
+
+Confirm the container is using:
+
+```text
+jenkins_home:/var/jenkins_home
+```
+
+A new empty volume would produce a seemingly fresh Jenkins environment.
+
+---
+
+## 12.61 Docker Command Not Found Inside Jenkins
+
+This means:
+
+```text
+Docker socket may be mounted
+but Docker CLI is missing
+```
+
+Verify:
+
+```bash
+command -v docker
+```
+
+The CLI must be installed or included in the Jenkins runtime.
+
+---
+
+## 12.62 Permission Denied on Docker Socket
+
+Inspect:
+
+```bash
+ls -l \
+  /var/run/docker.sock
+```
+
+Nana's demo fix:
+
+```bash
+chmod 666 \
+  /var/run/docker.sock
+```
+
+Safer rebuild:
+
+```text
+match Docker group access
+with Jenkins container group membership
+```
+
+Do not confuse:
+
+```text
+command not found
+```
+
+with:
+
+```text
+permission denied
+```
+
+They are different problems.
+
+---
+
+## 12.63 `kubectl` Exists but Cannot Connect
+
+At the tool-install stage this may be expected.
+
+Check separately:
+
+```text
+kubectl installed?
+kubeconfig exists?
+AWS credentials available?
+EKS cluster exists?
+API endpoint reachable?
+AWS identity authorized?
+```
+
+Do not reinstall `kubectl` merely because cluster authentication has not yet been configured.
+
+---
+
+## 12.64 `envsubst: command not found`
+
+Inside Jenkins as root:
+
+```bash
+apt-get update
+
+apt-get install -y \
+  gettext-base
+```
+
+Verify:
+
+```bash
+command -v envsubst
+```
+
+---
+
+## 12.65 `aws: command not found`
+
+Install AWS CLI in the Jenkins runtime.
+
+Verify:
+
+```bash
+aws --version
+```
+
+Do not work around this by moving AWS authentication logic back into the application repository.
+
+The Jenkins runtime is responsible for providing the required CLI.
+
+---
+
+# Phase 12 Part 1 Checklist
+
+## 12.66 Completion Criteria
+
+```text
+[ ] DigitalOcean Jenkins host exists
+[ ] Ubuntu host reachable by SSH
+[ ] Docker installed on host
+[ ] Docker daemon running
+[ ] jenkins_home volume created
+[ ] Jenkins runs in Docker
+[ ] Jenkins UI reachable
+[ ] Jenkins initialization complete
+[ ] suggested plugins installed
+[ ] Jenkins persistent state verified
+[ ] Docker socket mounted
+[ ] Docker CLI available inside Jenkins
+[ ] Jenkins can communicate with host Docker daemon
+[ ] Maven tool named Maven configured
+[ ] kubectl available
+[ ] Nana aws-iam-authenticator method documented
+[ ] AWS CLI available
+[ ] envsubst available
+[ ] Jenkins .kube location prepared
+[ ] github-token exists in Jenkins
+[ ] aws_ecr_creds exists in Jenkins
+[ ] secret values remain outside Git
+[ ] DigitalOcean cost acknowledged
+```
+
+---
+
+## 12.67 Phase 12 Status
+
+```text
+DigitalOcean Jenkins server
+✅ documented
+
+Docker host
+✅ documented
+
+Jenkins container
+✅ documented
+
+Jenkins persistence
+✅ documented
+
+Docker-outside-of-Docker
+✅ documented
+
+Nana chmod 666 method
+✅ preserved
+
+safer group-based improvement
+✅ distinguished
+
+kubectl
+✅ documented
+
+aws-iam-authenticator
+✅ Nana historical method preserved
+
+AWS CLI
+✅ reproducible capstone requirement documented
+
+envsubst
+✅ documented
+
+Jenkins kubeconfig workflow
+✅ documented
+
+Jenkins credentials
+✅ documented
+
+Amazon ECR provisioning
+🟡 Part 2
+
+Amazon EKS provisioning
+🟡 Part 2
+
+managed nodegroup
+🟡 Part 2
+
+cluster connectivity
+🟡 Part 2
+```
+
+Phase 12 remains **partially complete**.
 
 ---
 
