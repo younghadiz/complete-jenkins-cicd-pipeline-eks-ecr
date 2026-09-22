@@ -21321,7 +21321,1440 @@ future observability improvements
 
 # 16. End-to-End Testing
 
-To be documented in a later verified documentation batch.
+## 16.1 Objective
+
+Prove that every major stage of the CI/CD chain is connected correctly from Git source control through the publicly reachable application.
+
+End-to-end testing must validate:
+
+```text id="0w9dr3"
+Git repository
+        ↓
+Maven project version
+        ↓
+Jenkins pipeline
+        ↓
+automated test
+        ↓
+JAR artifact
+        ↓
+Docker image
+        ↓
+Amazon ECR
+        ↓
+Amazon EKS Deployment
+        ↓
+running Pod
+        ↓
+Kubernetes Service
+        ↓
+AWS Classic ELB
+        ↓
+public HTTP request
+        ↓
+expected application content
+```
+
+This phase should primarily be **read-only verification**.
+
+Do not change the running application merely to prove that it exists.
+
+---
+
+## 16.2 Verified End-to-End Chain
+
+The final verified chain was:
+
+```text id="tfo22y"
+develop
+commit 09c96af
+        ↓
+pom.xml
+version 1.1.1
+        ↓
+Jenkins
+Finished: SUCCESS
+        ↓
+Docker image
+java-maven-app:1.1.1-2
+        ↓
+Amazon ECR
+digest sha256:aec124...
+        ↓
+Kubernetes Deployment
+image 1.1.1-2
+        ↓
+running Pod
+same sha256:aec124...
+Ready=true
+Restarts=0
+        ↓
+LoadBalancer Service
+80:30321 → 8080
+        ↓
+Classic ELB
+backend InService
+        ↓
+HTTP 200
+        ↓
+Welcome to Java Maven Application
+```
+
+---
+
+# Source-Control Verification
+
+## 16.3 Verify Working Tree
+
+Run:
+
+```bash id="bphabn"
+git status
+```
+
+Expected:
+
+```text id="po9b6t"
+On branch develop
+
+nothing to commit, working tree clean
+```
+
+For the historical verification, `develop` was also up to date with:
+
+```text id="8r96qn"
+github/develop
+```
+
+---
+
+## 16.4 Verify Current Branch
+
+```bash id="kc3cw6"
+git branch --show-current
+```
+
+Expected:
+
+```text id="kgj6o0"
+develop
+```
+
+---
+
+## 16.5 Verify Current Commit
+
+Run:
+
+```bash id="hu478u"
+git log \
+  -1 \
+  --oneline \
+  --decorate
+```
+
+Verified:
+
+```text id="f876g4"
+09c96af
+ci: version bump
+```
+
+This is the commit automatically created by Jenkins after the final successful deployment.
+
+---
+
+## 16.6 Verify GitHub and GitLab Synchronization
+
+Fetch both remotes:
+
+```bash id="l6q2yj"
+git fetch github
+git fetch gitlab
+```
+
+Then:
+
+```bash id="gmerbp"
+printf 'Local develop:  '
+git rev-parse develop
+
+printf 'GitHub develop: '
+git rev-parse github/develop
+
+printf 'GitLab develop: '
+git rev-parse gitlab/develop
+```
+
+Verified result:
+
+```text id="ub1yrl"
+Local develop:
+09c96af58fd465c9adb18b6a54aba839109a90b6
+
+GitHub develop:
+09c96af58fd465c9adb18b6a54aba839109a90b6
+
+GitLab develop:
+09c96af58fd465c9adb18b6a54aba839109a90b6
+```
+
+This proves that the primary repository, secondary mirror, and local branch were synchronized.
+
+---
+
+## 16.7 Why Remote Synchronization Matters
+
+The Jenkins commit-back targets:
+
+```text id="no46ql"
+GitHub
+```
+
+only.
+
+GitLab is maintained as the secondary mirror.
+
+Therefore the final state should not be considered fully synchronized until:
+
+```text id="3t4nmv"
+Local
+=
+GitHub
+=
+GitLab
+```
+
+for the intended branch.
+
+---
+
+# Maven Version Verification
+
+## 16.8 Read Maven Project Version
+
+Run:
+
+```bash id="z1fbmc"
+mvn help:evaluate \
+  -Dexpression=project.version \
+  -q \
+  -DforceStdout
+```
+
+Verified:
+
+```text id="g22g4l"
+1.1.1
+```
+
+---
+
+## 16.9 Verify Directly in `pom.xml`
+
+Run:
+
+```bash id="8gk6tu"
+grep -n \
+  '<version>' \
+  pom.xml \
+  | head -5
+```
+
+Verified application version:
+
+```xml id="dfgb5h"
+<version>1.1.1</version>
+```
+
+This proves the Jenkins version commit was not limited to a temporary workspace.
+
+The version was pushed back into Git.
+
+---
+
+# Jenkins Verification
+
+## 16.10 Verify Final Pipeline Result
+
+The final `develop` Jenkins pipeline must show:
+
+```text id="93tqsb"
+Finished: SUCCESS
+```
+
+Expected project stages:
+
+```text id="mc3nmw"
+Increment Version
+Build Application
+Build Docker Image
+Push Docker Image
+Deploy
+Commit Version Update
+```
+
+All must have completed successfully.
+
+---
+
+## 16.11 Verify Version Increment in Jenkins
+
+The final successful pipeline showed:
+
+```text id="aj3zhi"
+Starting Maven version:
+1.1.0-SNAPSHOT
+
+New application version:
+1.1.1
+
+Docker image tag:
+1.1.1-2
+```
+
+This connects the source version to the deployment image.
+
+---
+
+## 16.12 Verify Automated Test
+
+Jenkins must show:
+
+```text id="u2af2r"
+Tests run:
+1
+
+Failures:
+0
+
+Errors:
+0
+
+Skipped:
+0
+```
+
+and:
+
+```text id="z22ntu"
+BUILD SUCCESS
+```
+
+A successful deployment without the expected automated test result would not satisfy the full CI validation chain.
+
+---
+
+# ECR Verification
+
+## 16.13 Verify Image Tag
+
+Run:
+
+```bash id="6p4g8l"
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --image-ids imageTag=1.1.1-2 \
+  --region ca-central-1 \
+  --query 'imageDetails[0].{
+    Tags:imageTags,
+    Digest:imageDigest,
+    PushedAt:imagePushedAt,
+    Size:imageSizeInBytes
+  }' \
+  --output table
+```
+
+Verified:
+
+```text id="biv85q"
+Tag:
+1.1.1-2
+
+Digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+Size:
+130785518 bytes
+```
+
+The recorded push time was:
+
+```text id="kfm8ar"
+2026-09-20T20:51:19.194000-07:00
+```
+
+---
+
+## 16.14 Save the Expected Digest
+
+For comparison:
+
+```bash id="0nvdg8"
+export EXPECTED_ECR_DIGEST="$(
+  aws ecr describe-images \
+    --repository-name java-maven-app \
+    --image-ids imageTag=1.1.1-2 \
+    --region ca-central-1 \
+    --query 'imageDetails[0].imageDigest' \
+    --output text
+)"
+```
+
+Verify:
+
+```bash id="cf3elm"
+echo "$EXPECTED_ECR_DIGEST"
+```
+
+Expected:
+
+```text id="tn7chg"
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+# Kubernetes Deployment Verification
+
+## 16.15 Verify Deployment Image
+
+Run:
+
+```bash id="udzxnv"
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+```
+
+Verified:
+
+```text id="6cw59d"
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+The Deployment tag must match the verified ECR tag.
+
+---
+
+## 16.16 Verify Deployment Health
+
+Run:
+
+```bash id="1c90kq"
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified:
+
+```text id="bhnql0"
+READY:
+1/1
+
+UP-TO-DATE:
+1
+
+AVAILABLE:
+1
+```
+
+Image:
+
+```text id="w70v2f"
+java-maven-app:1.1.1-2
+```
+
+---
+
+## 16.17 Deployment Rollout History
+
+Run:
+
+```bash id="ah7920"
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+Verified:
+
+```text id="00j1ps"
+REVISION
+1
+2
+```
+
+The Deployment had two Kubernetes rollout revisions.
+
+This history becomes important in:
+
+```text id="6la5dl"
+Phase 17 — Rollback
+```
+
+---
+
+# Running Pod Verification
+
+## 16.18 Verify Runtime Image
+
+Run:
+
+```bash id="zfhw65"
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+```
+
+Verified:
+
+```text id="nfaz9m"
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+ImageID:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app@sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+---
+
+# Digest Chain Verification
+
+## 16.19 Why Digest Comparison Is Important
+
+A tag such as:
+
+```text id="4bl2ha"
+1.1.1-2
+```
+
+identifies the image by name/tag.
+
+However, ECR currently allows:
+
+```text id="3m8xan"
+MUTABLE
+```
+
+tags.
+
+The digest identifies the actual container content.
+
+Therefore stronger verification is:
+
+```text id="3fs7p4"
+ECR digest
+=
+running Pod ImageID digest
+```
+
+rather than checking only that both say:
+
+```text id="8mog9f"
+1.1.1-2
+```
+
+---
+
+## 16.20 Read the Running Pod Digest
+
+Run:
+
+```bash id="p2zge2"
+export RUNNING_IMAGE_ID="$(
+  kubectl get pods \
+    --namespace default \
+    -l app=java-maven-app \
+    -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+)"
+```
+
+Then:
+
+```bash id="u497p8"
+echo "$RUNNING_IMAGE_ID"
+```
+
+Expected pattern:
+
+```text id="j4opyq"
+...java-maven-app@sha256:<digest>
+```
+
+---
+
+## 16.21 Extract the Runtime Digest
+
+```bash id="6qzats"
+export RUNNING_DIGEST="$(
+  printf '%s\n' "$RUNNING_IMAGE_ID" \
+    | sed 's/^.*@//'
+)"
+```
+
+Verify:
+
+```bash id="qzi0u3"
+echo "$RUNNING_DIGEST"
+```
+
+Expected:
+
+```text id="zgn27b"
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+## 16.22 Compare ECR and Runtime Digests
+
+Run:
+
+```bash id="i26ee4"
+printf 'ECR digest:     %s\n' "$EXPECTED_ECR_DIGEST"
+printf 'Runtime digest: %s\n' "$RUNNING_DIGEST"
+```
+
+Then:
+
+```bash id="gv1pao"
+if [ "$EXPECTED_ECR_DIGEST" = "$RUNNING_DIGEST" ]; then
+  echo "PASS: ECR and running Pod digests match."
+else
+  echo "FAIL: Running Pod digest does not match ECR."
+  exit 1
+fi
+```
+
+Verified result should be:
+
+```text id="g8fn04"
+PASS: ECR and running Pod digests match.
+```
+
+This is one of the strongest end-to-end validations in the project.
+
+---
+
+# Service Verification
+
+## 16.23 Verify Service
+
+Run:
+
+```bash id="y3vmzr"
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified:
+
+```text id="hu9xwn"
+TYPE:
+LoadBalancer
+
+CLUSTER-IP:
+10.100.197.178
+
+PORT(S):
+80:30321/TCP
+
+SELECTOR:
+app=java-maven-app
+```
+
+---
+
+# Endpoint Verification
+
+## 16.24 Verify EndpointSlice
+
+Run:
+
+```bash id="mxcm17"
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+Verified backend:
+
+```text id="kvkowt"
+Address:
+192.168.50.149
+
+Port:
+8080
+```
+
+This proves the Service currently has a matching application backend.
+
+---
+
+# External Load Balancer Verification
+
+## 16.25 Retrieve Application Host
+
+```bash id="5k052d"
+export APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+```
+
+Verify:
+
+```bash id="5t0pvm"
+echo "$APP_HOST"
+```
+
+Historical endpoint:
+
+```text id="o2k4r6"
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+```
+
+This hostname is generated infrastructure and may differ after recreation.
+
+---
+
+## 16.26 Verify DNS
+
+```bash id="2bbcg4"
+nslookup "$APP_HOST"
+```
+
+The verified hostname resolved successfully.
+
+Do not depend on the individual resolved IP addresses because they can change.
+
+---
+
+## 16.27 Verify Classic ELB Backend
+
+Run:
+
+```bash id="55u944"
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'InstanceStates[].{
+    Instance:InstanceId,
+    State:State
+  }' \
+  --output table
+```
+
+Verified:
+
+```text id="sws5p0"
+State:
+InService
+```
+
+---
+
+# External HTTP Verification
+
+## 16.28 Verify HTTP Status
+
+Run:
+
+```bash id="drdwet"
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Verified:
+
+```text id="j7912p"
+HTTP status: 200
+```
+
+---
+
+## 16.29 Verify Application Content
+
+Run:
+
+```bash id="87tm9o"
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Verified:
+
+```html id="jhdbsp"
+<h1>Welcome to Java Maven Application</h1>
+```
+
+This proves the external endpoint is not merely answering HTTP requests—it is serving the expected application.
+
+---
+
+# Full End-to-End Verification Script
+
+## 16.30 Reusable Verification Block
+
+The following block performs the major read-only checks together:
+
+```bash id="qk1bgi"
+set -e
+
+echo
+echo "===== Git State ====="
+git status
+git branch --show-current
+git log -1 --oneline
+
+echo
+echo "===== Remote develop hashes ====="
+git fetch github
+git fetch gitlab
+
+printf 'Local develop:  '
+git rev-parse develop
+
+printf 'GitHub develop: '
+git rev-parse github/develop
+
+printf 'GitLab develop: '
+git rev-parse gitlab/develop
+
+echo
+echo "===== Maven Version ====="
+mvn help:evaluate \
+  -Dexpression=project.version \
+  -q \
+  -DforceStdout
+
+echo
+echo
+echo "===== ECR Image ====="
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --image-ids imageTag=1.1.1-2 \
+  --region ca-central-1 \
+  --query 'imageDetails[0].{
+    Tags:imageTags,
+    Digest:imageDigest,
+    PushedAt:imagePushedAt,
+    Size:imageSizeInBytes
+  }' \
+  --output table
+
+echo
+echo "===== Deployment Image ====="
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+echo
+echo "===== Deployment Health ====="
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+echo
+echo "===== Running Pod ====="
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+
+echo
+echo "===== Service ====="
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+echo
+echo "===== EndpointSlice ====="
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+
+APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+
+echo
+echo "===== Application Endpoint ====="
+echo "$APP_HOST"
+
+echo
+echo "===== External HTTP Status ====="
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+
+echo
+echo "===== Application Content ====="
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+
+echo
+echo "===== ELB Backend Health ====="
+aws elb describe-instance-health \
+  --load-balancer-name a20caf1e7dc2c4a61ab0ceb6d4e6ec35 \
+  --region ca-central-1 \
+  --query 'InstanceStates[].{
+    Instance:InstanceId,
+    State:State
+  }' \
+  --output table
+```
+
+This block verifies state.
+
+It does not intentionally modify the Deployment, Service, image, Maven version, or infrastructure.
+
+---
+
+# Stronger Automated Assertions
+
+## 16.31 Verify Git Hash Equality
+
+```bash id="kb6if2"
+LOCAL_HASH="$(git rev-parse develop)"
+GITHUB_HASH="$(git rev-parse github/develop)"
+GITLAB_HASH="$(git rev-parse gitlab/develop)"
+
+if [ "$LOCAL_HASH" = "$GITHUB_HASH" ] &&
+   [ "$LOCAL_HASH" = "$GITLAB_HASH" ]; then
+  echo "PASS: Local, GitHub and GitLab develop are synchronized."
+else
+  echo "FAIL: develop references are not synchronized."
+  exit 1
+fi
+```
+
+---
+
+## 16.32 Verify Maven Version
+
+```bash id="tpim7c"
+APP_VERSION="$(
+  mvn help:evaluate \
+    -Dexpression=project.version \
+    -q \
+    -DforceStdout
+)"
+
+if [ "$APP_VERSION" = "1.1.1" ]; then
+  echo "PASS: Maven project version is 1.1.1."
+else
+  echo "FAIL: Unexpected Maven version: $APP_VERSION"
+  exit 1
+fi
+```
+
+For future builds, replace the hardcoded expected version with the intended release/version value.
+
+---
+
+## 16.33 Verify Deployment Image
+
+```bash id="9f8qzp"
+EXPECTED_IMAGE="002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2"
+
+DEPLOYMENT_IMAGE="$(
+  kubectl get deployment \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+)"
+
+if [ "$DEPLOYMENT_IMAGE" = "$EXPECTED_IMAGE" ]; then
+  echo "PASS: Deployment uses expected image."
+else
+  echo "FAIL: Deployment image mismatch."
+  echo "Expected: $EXPECTED_IMAGE"
+  echo "Actual:   $DEPLOYMENT_IMAGE"
+  exit 1
+fi
+```
+
+---
+
+## 16.34 Verify Pod Readiness and Restart Count
+
+```bash id="2ip4yi"
+POD_READY="$(
+  kubectl get pods \
+    --namespace default \
+    -l app=java-maven-app \
+    -o jsonpath='{.items[0].status.containerStatuses[0].ready}'
+)"
+
+POD_RESTARTS="$(
+  kubectl get pods \
+    --namespace default \
+    -l app=java-maven-app \
+    -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}'
+)"
+
+if [ "$POD_READY" = "true" ] &&
+   [ "$POD_RESTARTS" = "0" ]; then
+  echo "PASS: Pod is Ready with zero restarts."
+else
+  echo "FAIL: Pod health check failed."
+  echo "Ready:    $POD_READY"
+  echo "Restarts: $POD_RESTARTS"
+  exit 1
+fi
+```
+
+---
+
+## 16.35 Verify HTTP 200
+
+```bash id="ua6nb7"
+HTTP_STATUS="$(
+  curl -sS \
+    -o /dev/null \
+    -w '%{http_code}' \
+    --connect-timeout 10 \
+    --max-time 20 \
+    "http://${APP_HOST}/"
+)"
+
+if [ "$HTTP_STATUS" = "200" ]; then
+  echo "PASS: External endpoint returned HTTP 200."
+else
+  echo "FAIL: External endpoint returned HTTP $HTTP_STATUS."
+  exit 1
+fi
+```
+
+---
+
+## 16.36 Verify Expected Page Content
+
+```bash id="i6lv6t"
+if curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -Fq "Welcome to Java Maven Application"
+then
+  echo "PASS: Expected application content returned."
+else
+  echo "FAIL: Expected application content not found."
+  exit 1
+fi
+```
+
+---
+
+# End-to-End Failure Diagnosis
+
+## 16.37 Use the Chain to Locate a Failure
+
+If end-to-end testing fails, identify the first broken layer.
+
+```text id="mgcza8"
+Git wrong?
+    ↓
+Maven wrong?
+    ↓
+Jenkins failed?
+    ↓
+ECR image missing?
+    ↓
+Deployment wrong image?
+    ↓
+Pod unhealthy?
+    ↓
+Service has no endpoint?
+    ↓
+ELB unhealthy?
+    ↓
+HTTP fails?
+```
+
+Do not begin by rebuilding everything.
+
+---
+
+## 16.38 Example — ECR Correct but Pod Digest Wrong
+
+If:
+
+```text id="n3wqcn"
+ECR tag:
+1.1.1-2
+
+Deployment tag:
+1.1.1-2
+
+runtime digest:
+different
+```
+
+investigate:
+
+```text id="g7krdb"
+mutable tag overwritten?
+Pod not recreated?
+imagePullPolicy behavior?
+wrong registry?
+stale workload?
+```
+
+Digest comparison helps reveal problems that tag comparison alone can hide.
+
+---
+
+## 16.39 Example — Pod Healthy but HTTP Fails
+
+Check:
+
+```text id="puvisb"
+EndpointSlice
+Service
+NodePort
+ELB backend state
+DNS
+```
+
+Do not modify Java code if the application is already healthy inside Kubernetes.
+
+---
+
+## 16.40 Example — HTTP 200 but Git Remotes Differ
+
+The application may be running correctly while repository synchronization is incomplete.
+
+That means:
+
+```text id="hwt46p"
+runtime verification
+✅
+
+source-control mirror verification
+❌
+```
+
+Synchronize GitLab without creating another application version commit.
+
+---
+
+# End-to-End Evidence
+
+## 16.41 Git Evidence
+
+Capture:
+
+```text id="a3369k"
+branch:
+develop
+
+commit:
+09c96af
+
+Local/GitHub/GitLab:
+same full SHA
+```
+
+---
+
+## 16.42 Application-Version Evidence
+
+Capture:
+
+```text id="ncwrij"
+pom.xml:
+1.1.1
+```
+
+and:
+
+```text id="rxs09t"
+mvn help:evaluate:
+1.1.1
+```
+
+---
+
+## 16.43 Jenkins Evidence
+
+Capture:
+
+```text id="2x7spv"
+Finished: SUCCESS
+
+Application version:
+1.1.1
+
+Docker image tag:
+1.1.1-2
+
+Tests:
+1 passed
+```
+
+---
+
+## 16.44 ECR Evidence
+
+Capture:
+
+```text id="u83i3c"
+repository:
+java-maven-app
+
+tag:
+1.1.1-2
+
+digest:
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+---
+
+## 16.45 Kubernetes Evidence
+
+Capture:
+
+```text id="iossqv"
+Deployment:
+1/1
+
+image:
+1.1.1-2
+
+Pod:
+Ready=true
+
+Restarts:
+0
+
+runtime digest:
+sha256:aec124...
+```
+
+---
+
+## 16.46 Networking Evidence
+
+Capture:
+
+```text id="28fs4z"
+Service:
+LoadBalancer
+
+NodePort:
+30321
+
+Endpoint:
+Pod:8080
+
+Classic ELB:
+InService
+```
+
+---
+
+## 16.47 User-Facing Evidence
+
+Capture:
+
+```text id="vk52fa"
+HTTP status:
+200
+
+Page content:
+Welcome to Java Maven Application
+```
+
+---
+
+# End-to-End Result
+
+## 16.48 Verified Result
+
+The project passed the complete validation chain:
+
+```text id="vz5qte"
+Git synchronization
+PASS
+
+Maven version
+PASS
+
+Jenkins pipeline
+PASS
+
+automated unit test
+PASS
+
+JAR creation
+PASS
+
+Docker build
+PASS
+
+ECR push
+PASS
+
+ECR tag
+PASS
+
+ECR digest
+PASS
+
+Deployment image
+PASS
+
+Pod runtime digest
+PASS
+
+Pod readiness
+PASS
+
+Pod restart check
+PASS
+
+Service
+PASS
+
+EndpointSlice
+PASS
+
+Classic ELB backend
+PASS
+
+DNS
+PASS
+
+external HTTP
+PASS
+
+expected page content
+PASS
+```
+
+---
+
+## 16.49 End-to-End Completion Checklist
+
+```text id="kq2p2g"
+[ ] working tree clean
+[ ] current branch develop
+[ ] current commit 09c96af
+[ ] Local/GitHub/GitLab develop hashes match
+
+[ ] Maven project version = 1.1.1
+
+[ ] Jenkins final build = SUCCESS
+[ ] Jenkins test passed
+[ ] Docker image tag = 1.1.1-2
+
+[ ] ECR image exists
+[ ] ECR tag = 1.1.1-2
+[ ] ECR digest recorded
+
+[ ] Deployment image = 1.1.1-2
+[ ] Deployment Ready = 1/1
+[ ] Pod Ready = true
+[ ] Pod Restarts = 0
+
+[ ] running Pod digest equals ECR digest
+
+[ ] Service type = LoadBalancer
+[ ] Service endpoint exists
+[ ] ELB backend = InService
+
+[ ] DNS resolves
+[ ] HTTP status = 200
+[ ] expected HTML content returned
+
+[ ] no unverified layer remains in the CI/CD chain
+```
+
+---
+
+## 16.50 Phase 16 Final State
+
+```text id="wn6c9r"
+source control
+✅
+
+version state
+✅
+
+CI pipeline
+✅
+
+automated test
+✅
+
+artifact
+✅
+
+container registry
+✅
+
+Kubernetes deployment
+✅
+
+runtime digest
+✅
+
+Pod health
+✅
+
+Service routing
+✅
+
+load balancer
+✅
+
+public application
+✅
+
+dual-remote synchronization
+✅
+```
+
+**End-to-End Testing is complete.**
 
 ---
 
