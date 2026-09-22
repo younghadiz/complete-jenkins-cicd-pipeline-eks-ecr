@@ -3044,13 +3044,1426 @@ Do not include sensitive environment variables in screenshots.
 
 # 7. Containerization
 
-To be documented in a later verified documentation batch.
+## 7.1 Objective
+
+Package the verified executable Java Maven application into a Docker image before introducing Jenkins, Amazon ECR, Amazon EKS, or any chargeable cloud infrastructure.
+
+The project sequence remains:
+
+```text
+artifact creation
+→ containerization
+→ local container testing
+→ pipeline preparation
+```
+
+The Docker image must first work locally before Jenkins is allowed to build or publish it.
+
+---
+
+## 7.2 Nana Learning Connection
+
+The TechWorld with Nana Jenkins workflow builds the application artifact first and then creates a Docker image that contains that artifact.
+
+The basic pattern is:
+
+```text
+Maven
+   │
+   ▼
+Executable JAR
+   │
+   ▼
+Dockerfile
+   │
+   ▼
+Docker image
+```
+
+This capstone keeps that same simple learning model.
+
+The application is **not compiled inside Docker**.
+
+Instead:
+
+```text
+Maven creates JAR
+→ Docker copies JAR
+→ Java runtime starts JAR
+```
+
+This separation keeps the Dockerfile easy to understand and matches the later Jenkins workflow.
+
+---
+
+## 7.3 Working Directory
+
+LOCAL — VS Code integrated terminal:
+
+```text
+/Users/younghadiz/Documents/tech-workspace/devops-capstone-projects/complete-jenkins-cicd-pipeline-eks-ecr
+```
+
+Verify:
+
+```bash
+pwd
+
+git status
+
+git branch --show-current
+
+git remote -v
+```
+
+The original containerization work was completed from:
+
+```text
+feature/containerize-application
+```
+
+---
+
+## 7.4 Create the Feature Branch
+
+Before switching branches:
+
+```bash
+git status
+git branch --show-current
+git remote -v
+```
+
+From `develop`:
+
+```bash
+git switch -c feature/containerize-application
+```
+
+Verify:
+
+```bash
+git branch --show-current
+```
+
+Expected:
+
+```text
+feature/containerize-application
+```
+
+---
+
+## 7.5 Confirm the JAR Exists
+
+The Dockerfile expects an already-created Maven artifact.
+
+Run:
+
+```bash
+find target \
+  -maxdepth 1 \
+  -type f \
+  -name 'java-maven-app-*.jar' \
+  -print
+```
+
+For the local project stage, the main executable artifact was:
+
+```text
+target/java-maven-app-1.1.0-SNAPSHOT.jar
+```
+
+If the JAR is missing, rebuild it:
+
+```bash
+mvn clean package
+```
+
+Do not continue with Docker until Maven returns:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+## 7.6 Create `Dockerfile`
+
+Full path:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr/Dockerfile
+```
+
+Complete verified file:
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY target/java-maven-app-*.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+---
+
+## 7.7 Dockerfile Explanation
+
+### Base image
+
+```dockerfile
+FROM eclipse-temurin:17-jre
+```
+
+The application requires Java 17.
+
+Only a Java Runtime Environment is required because compilation already happened with Maven.
+
+The container does not need:
+
+```text
+Maven
+javac
+source code
+```
+
+to start the packaged application.
+
+---
+
+### Working directory
+
+```dockerfile
+WORKDIR /app
+```
+
+All subsequent container operations use:
+
+```text
+/app
+```
+
+as the working directory.
+
+---
+
+### Copy the executable JAR
+
+```dockerfile
+COPY target/java-maven-app-*.jar app.jar
+```
+
+The source artifact remains versioned in the Maven `target/` directory, while the file inside the container receives the stable name:
+
+```text
+/app/app.jar
+```
+
+This lets the Dockerfile work with later Maven versions such as:
+
+```text
+java-maven-app-1.1.0-SNAPSHOT.jar
+java-maven-app-1.1.1.jar
+```
+
+without hardcoding the Maven version into the Dockerfile.
+
+---
+
+### Application port
+
+```dockerfile
+EXPOSE 8080
+```
+
+The Spring Boot application uses:
+
+```text
+8080
+```
+
+inside the container.
+
+`EXPOSE` documents the intended container port.
+
+It does not by itself publish the port to the host.
+
+The actual local port mapping happens with:
+
+```bash
+-p 8080:8080
+```
+
+when the container is started.
+
+---
+
+### Entrypoint
+
+```dockerfile
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Docker starts the application as:
+
+```bash
+java -jar app.jar
+```
+
+inside:
+
+```text
+/app
+```
+
+---
+
+## 7.8 Create `.dockerignore`
+
+Full path:
+
+```text
+complete-jenkins-cicd-pipeline-eks-ecr/.dockerignore
+```
+
+Complete verified file:
+
+```dockerignore
+.git
+.gitignore
+
+.idea
+.vscode
+.DS_Store
+
+*.log
+*.tmp
+*.swp
+
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+target/*
+!target/java-maven-app-*.jar
+target/*.jar.original
+```
+
+---
+
+## 7.9 Why `.dockerignore` Matters
+
+Docker sends a build context to the Docker daemon.
+
+Without `.dockerignore`, that context could unnecessarily include:
+
+```text
+Git history
+editor configuration
+logs
+temporary files
+local environment files
+private key files
+unneeded Maven output
+```
+
+The important Maven rule is:
+
+```dockerignore
+target/*
+```
+
+which excludes Maven output generally.
+
+Then:
+
+```dockerignore
+!target/java-maven-app-*.jar
+```
+
+adds the executable application JAR back into the Docker build context.
+
+Finally:
+
+```dockerignore
+target/*.jar.original
+```
+
+keeps Maven's original pre-Spring-Boot artifact out of the image context.
+
+The result is:
+
+```text
+Docker receives the executable JAR
+but not unnecessary target/ content
+```
+
+---
+
+## 7.10 Verify Docker Build Context Files
+
+Run:
+
+```bash
+cat Dockerfile
+
+echo
+echo "===== Docker Ignore ====="
+cat .dockerignore
+
+echo
+echo "===== Executable Artifact ====="
+find target \
+  -maxdepth 1 \
+  -type f \
+  -name 'java-maven-app-*.jar' \
+  ! -name '*.jar.original' \
+  -print
+```
+
+---
+
+## 7.11 Build the Local Docker Image
+
+The verified local image tag was:
+
+```text
+java-maven-app:1.1.0-SNAPSHOT
+```
+
+Build:
+
+```bash
+docker build \
+  -t java-maven-app:1.1.0-SNAPSHOT \
+  .
+```
+
+Equivalent one-line form used during the project:
+
+```bash
+docker build -t java-maven-app:1.1.0-SNAPSHOT .
+```
+
+Expected final behavior:
+
+```text
+Docker reads Dockerfile
+→ pulls/resolves eclipse-temurin:17-jre
+→ creates /app
+→ copies executable JAR to /app/app.jar
+→ configures ENTRYPOINT
+→ creates java-maven-app:1.1.0-SNAPSHOT
+```
+
+---
+
+## 7.12 Verify Image Exists
+
+Run:
+
+```bash
+docker image ls java-maven-app
+```
+
+Expected repository/tag:
+
+```text
+REPOSITORY       TAG
+java-maven-app   1.1.0-SNAPSHOT
+```
+
+---
+
+## 7.13 Inspect the Built Image
+
+Run:
+
+```bash
+docker image inspect \
+  java-maven-app:1.1.0-SNAPSHOT \
+  --format 'Architecture={{.Architecture}} OS={{.Os}} WorkingDir={{.Config.WorkingDir}} Entrypoint={{json .Config.Entrypoint}}'
+```
+
+The verified local image returned:
+
+```text
+Architecture=arm64
+OS=linux
+WorkingDir=/app
+Entrypoint=["java","-jar","app.jar"]
+```
+
+### Why ARM64 Was Expected Locally
+
+The local development machine was an Apple Silicon Mac.
+
+Docker Desktop therefore built the local image for:
+
+```text
+linux/arm64
+```
+
+by default.
+
+This did not become a problem for the deployed EKS image because the production CI image was later built by Jenkins on the Linux DigitalOcean environment rather than pushing this local Apple Silicon image directly into ECR.
+
+The EKS worker node was:
+
+```text
+amd64 / x86_64
+```
+
+so the architecture of the final Jenkins-built image had to be compatible with that environment.
+
+---
+
+## 7.14 Important Architecture Lesson
+
+A container image must be compatible with the CPU architecture where it will run.
+
+Common architectures include:
+
+```text
+arm64
+amd64
+```
+
+Apple Silicon:
+
+```text
+arm64
+```
+
+Typical cloud Linux servers and the EKS worker used in this project:
+
+```text
+amd64
+```
+
+For this project the flow was:
+
+```text
+Mac local validation
+    │
+    └── ARM64 image
+
+Jenkins on DigitalOcean
+    │
+    └── builds deployment image for its Linux platform
+            │
+            ▼
+           ECR
+            │
+            ▼
+       EKS x86_64 node
+```
+
+Therefore the local development image was a validation artifact, not the image pushed to ECR.
+
+---
+
+## 7.15 Future Multi-Architecture Improvement
+
+For a workflow where the same image must support both architectures, a future improvement could use Docker Buildx:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  ...
+```
+
+This was **not required** for the Nana-aligned implementation.
+
+Do not add multi-architecture complexity unless the deployment requirements need it.
+
+---
+
+## 7.16 Current Container Security Limitation
+
+The current Dockerfile does not declare:
+
+```dockerfile
+USER
+```
+
+Therefore the Java process starts as the image's default user.
+
+Later container logs confirmed the deployed application was running as:
+
+```text
+root
+```
+
+This is acceptable for reproducing the basic training implementation, but it is a security improvement opportunity.
+
+Future production improvement:
+
+```text
+create dedicated application user
+→ change ownership where needed
+→ run Java as non-root
+```
+
+That improvement must be documented separately rather than silently replacing the implementation used in this project.
+
+---
+
+## 7.17 Additional Future Container Improvements
+
+Potential future improvements include:
+
+```text
+pin base image by digest
+run as non-root
+add OCI labels
+scan image for vulnerabilities
+create SBOM
+use multi-stage build if appropriate
+configure JVM container limits
+support multi-architecture images
+```
+
+These are not required for the current Nana-style implementation.
+
+---
+
+## 7.18 Containerization Cost
+
+Local Docker image creation does not create AWS charges.
+
+```text
+AWS cost: none
+ECR storage: none yet
+EKS cost: none yet
+DigitalOcean infrastructure change: none
+```
 
 ---
 
 # 8. Local Container Testing
 
-To be documented in a later verified documentation batch.
+## 8.1 Objective
+
+Run the Docker image locally and verify:
+
+```text
+container starts
+→ Spring Boot starts
+→ port 8080 is published
+→ application responds
+→ expected HTML is returned
+→ container state is healthy enough for deployment work
+→ container can stop cleanly
+→ test container can be removed
+```
+
+No image should be pushed to ECR before this test succeeds.
+
+---
+
+## 8.2 Check Port 8080 Before Starting
+
+Run:
+
+```bash
+lsof -nP \
+  -iTCP:8080 \
+  -sTCP:LISTEN
+```
+
+If nothing is returned, port `8080` is free.
+
+Do not start the Docker container if an unrelated required application already occupies the port.
+
+---
+
+## 8.3 Check for an Existing Test Container
+
+Run:
+
+```bash
+docker ps -a \
+  --filter name=java-maven-app-local
+```
+
+The verified project initially returned no existing test container.
+
+If an old stopped container from this project exists, inspect it before removing it.
+
+Do not blindly delete unrelated Docker containers.
+
+---
+
+## 8.4 Start the Application Container
+
+Verified historical command:
+
+```bash
+docker run -d \
+  --name java-maven-app-local \
+  -p 8080:8080 \
+  java-maven-app:1.1.0-SNAPSHOT
+```
+
+Explanation:
+
+```text
+-d
+→ run detached
+
+--name java-maven-app-local
+→ assign a predictable test-container name
+
+-p 8080:8080
+→ host port 8080
+→ container port 8080
+
+java-maven-app:1.1.0-SNAPSHOT
+→ local image and tag
+```
+
+Expected result:
+
+Docker prints the container ID.
+
+---
+
+## 8.5 Verify Container Is Running
+
+Run:
+
+```bash
+docker ps \
+  --filter name=java-maven-app-local
+```
+
+The verified container showed:
+
+```text
+IMAGE:
+java-maven-app:1.1.0-SNAPSHOT
+
+COMMAND:
+java -jar app.jar
+
+STATUS:
+Up
+
+PORT:
+0.0.0.0:8080->8080/tcp
+
+NAME:
+java-maven-app-local
+```
+
+Docker also exposed the IPv6 mapping:
+
+```text
+[::]:8080->8080/tcp
+```
+
+---
+
+## 8.6 Inspect Application Logs
+
+Run:
+
+```bash
+docker logs \
+  java-maven-app-local
+```
+
+Verified logs included:
+
+```text
+Spring Boot 3.5.5
+
+Starting Application using Java 17.0.20
+
+Tomcat initialized with port 8080
+
+Java app started
+
+Tomcat started on port 8080
+
+Started Application
+```
+
+This proves that the JAR was started successfully by Docker.
+
+---
+
+## 8.7 Verify the Full HTTP Response
+
+Run:
+
+```bash
+curl -i \
+  http://localhost:8080/
+```
+
+The verified project returned:
+
+```text
+HTTP/1.1 200
+```
+
+and:
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>MyApp</title>
+</head>
+<body>
+<h1>Welcome to Java Maven Application</h1>
+<!-- add image here  <img src="" width="" /> -->
+</body>
+</html>
+```
+
+---
+
+## 8.8 Verify HTTP Status Only
+
+Run:
+
+```bash
+curl -s \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  http://localhost:8080/
+```
+
+Verified result:
+
+```text
+HTTP status: 200
+```
+
+---
+
+## 8.9 Verify Expected Page Content
+
+Run:
+
+```bash
+curl -fsS \
+  http://localhost:8080/ \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Expected:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+This checks more than connectivity.
+
+It proves the expected application is actually responding.
+
+---
+
+## 8.10 Inspect Container State
+
+Verified command:
+
+```bash
+docker inspect \
+  java-maven-app-local \
+  --format 'Name={{.Name}}
+Image={{.Config.Image}}
+Status={{.State.Status}}
+Running={{.State.Running}}
+ExitCode={{.State.ExitCode}}
+Ports={{json .NetworkSettings.Ports}}'
+```
+
+Verified result:
+
+```text
+Name=/java-maven-app-local
+Image=java-maven-app:1.1.0-SNAPSHOT
+Status=running
+Running=true
+ExitCode=0
+Ports={"8080/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"},{"HostIp":"::","HostPort":"8080"}]}
+```
+
+This verifies:
+
+```text
+correct container
+correct image
+running state
+no startup failure
+correct port mapping
+```
+
+---
+
+## 8.11 Stop the Local Container
+
+Run:
+
+```bash
+docker stop \
+  java-maven-app-local
+```
+
+Verified output:
+
+```text
+java-maven-app-local
+```
+
+Inspect:
+
+```bash
+docker ps -a \
+  --filter name=java-maven-app-local
+```
+
+The historical test showed:
+
+```text
+Exited (143)
+```
+
+---
+
+## 8.12 Why Exit Code 143 Was Expected
+
+Linux exit code:
+
+```text
+143
+```
+
+normally means:
+
+```text
+128 + 15
+```
+
+where signal `15` is:
+
+```text
+SIGTERM
+```
+
+`docker stop` first sends SIGTERM to allow the application to shut down gracefully.
+
+Therefore:
+
+```text
+Exited (143)
+```
+
+after an intentional `docker stop` was not evidence of an application crash in this test.
+
+---
+
+## 8.13 Confirm the Application Is No Longer Reachable
+
+Run:
+
+```bash
+curl -s \
+  -o /dev/null \
+  -w 'HTTP status after stop: %{http_code}\n' \
+  --max-time 3 \
+  http://localhost:8080/
+```
+
+Verified result:
+
+```text
+HTTP status after stop: 000
+```
+
+For this test, `000` indicates `curl` did not receive an HTTP response because the local container was no longer serving the application.
+
+---
+
+## 8.14 Remove the Test Container
+
+Run:
+
+```bash
+docker rm \
+  java-maven-app-local
+```
+
+Verify:
+
+```bash
+docker ps -a \
+  --filter name=java-maven-app-local
+```
+
+Expected:
+
+```text
+no matching container
+```
+
+The local image can remain because it may still be useful for inspection.
+
+---
+
+## 8.15 Verify Only Intended Repository Files Changed
+
+Run:
+
+```bash
+git status
+
+git branch --show-current
+
+git diff --stat
+```
+
+At the historical point before committing, the project correctly showed only:
+
+```text
+.dockerignore
+Dockerfile
+```
+
+as new files.
+
+Generated Maven output remained ignored.
+
+---
+
+## 8.16 Inspect Both New Files Before Commit
+
+Run:
+
+```bash
+echo "===== Dockerfile ====="
+cat Dockerfile
+
+echo
+echo "===== .dockerignore ====="
+cat .dockerignore
+```
+
+Confirm no secrets are present.
+
+---
+
+## 8.17 Stage the Containerization Files
+
+Run:
+
+```bash
+git add \
+  Dockerfile \
+  .dockerignore
+```
+
+Inspect:
+
+```bash
+git status
+
+git diff --cached
+```
+
+Only these files should be staged:
+
+```text
+Dockerfile
+.dockerignore
+```
+
+---
+
+## 8.18 Commit Containerization
+
+Verified commit message:
+
+```bash
+git commit \
+  -m "feat: containerize Java Maven application"
+```
+
+Verified historical commit:
+
+```text
+07958db
+```
+
+---
+
+## 8.19 Push the Feature Branch
+
+GitHub primary:
+
+```bash
+git push -u \
+  github \
+  feature/containerize-application
+```
+
+GitLab secondary:
+
+```bash
+git push \
+  gitlab \
+  feature/containerize-application
+```
+
+Do not use `-u` on the GitLab push when GitHub should remain the branch upstream.
+
+---
+
+## 8.20 Merge into `develop`
+
+Before switching:
+
+```bash
+git status
+git branch --show-current
+git remote -v
+```
+
+Switch:
+
+```bash
+git switch develop
+```
+
+Update from GitHub if necessary:
+
+```bash
+git pull --ff-only \
+  github \
+  develop
+```
+
+Merge:
+
+```bash
+git merge --no-ff \
+  feature/containerize-application \
+  -m "merge: add application containerization"
+```
+
+Verified historical merge:
+
+```text
+35cfa89
+```
+
+---
+
+## 8.21 Push `develop`
+
+Primary:
+
+```bash
+git push \
+  github \
+  develop
+```
+
+Secondary:
+
+```bash
+git push \
+  gitlab \
+  develop
+```
+
+---
+
+## 8.22 Verify Synchronization
+
+Run:
+
+```bash
+git fetch github
+git fetch gitlab
+
+printf 'Local develop: '
+git rev-parse develop
+
+printf 'GitHub develop: '
+git rev-parse github/develop
+
+printf 'GitLab develop: '
+git rev-parse gitlab/develop
+```
+
+The verified historical value at this stage was:
+
+```text
+35cfa896e527c51183350ea672c1f89095dd4dbd
+```
+
+Feature branch:
+
+```text
+07958dbc20e83608b2674f763f8c2a4241ffa459
+```
+
+All copies were synchronized before moving to pipeline preparation.
+
+---
+
+## 8.23 Verified Containerization Git History
+
+At this point the history contained:
+
+```text
+35cfa89 merge: add application containerization
+|
+| 07958db feat: containerize Java Maven application
+|
+3132735 merge: add application status unit test
+```
+
+This preserves the focused feature branch and non-fast-forward merge history.
+
+---
+
+## 8.24 Security Review
+
+Verified positives:
+
+```text
+no credentials in Dockerfile
+no credentials in image command
+.env excluded
+private key extensions excluded
+Git metadata excluded
+Maven original JAR excluded
+```
+
+Known basic-training limitation:
+
+```text
+container runs using the base image's default user
+```
+
+Future improvement:
+
+```text
+run application with a dedicated non-root user
+```
+
+Do not change the current historical Dockerfile merely to make the documentation appear more advanced.
+
+---
+
+## 8.25 Troubleshooting — Port Already in Use
+
+If Docker reports that port `8080` cannot be bound:
+
+```bash
+lsof -nP \
+  -iTCP:8080 \
+  -sTCP:LISTEN
+```
+
+Identify the process first.
+
+Do not kill an unrelated process without understanding what it is.
+
+Alternative temporary test mapping:
+
+```bash
+docker run -d \
+  --name java-maven-app-local \
+  -p 8081:8080 \
+  java-maven-app:1.1.0-SNAPSHOT
+```
+
+Then test:
+
+```text
+http://localhost:8081
+```
+
+The verified historical project used `8080:8080`.
+
+---
+
+## 8.26 Troubleshooting — Container Exits Immediately
+
+Inspect:
+
+```bash
+docker ps -a \
+  --filter name=java-maven-app-local
+
+docker logs \
+  java-maven-app-local
+```
+
+Check:
+
+```text
+JAR copied successfully
+ENTRYPOINT correct
+Java runtime available
+application port correct
+application startup exception
+```
+
+Do not repeatedly recreate the container without first reading its logs.
+
+---
+
+## 8.27 Troubleshooting — JAR Missing During Build
+
+A Docker error involving:
+
+```text
+target/java-maven-app-*.jar
+```
+
+usually means the Maven artifact was not built before Docker.
+
+Verify:
+
+```bash
+find target \
+  -maxdepth 1 \
+  -type f \
+  -name 'java-maven-app-*.jar' \
+  -print
+```
+
+If missing:
+
+```bash
+mvn clean package
+```
+
+Then repeat:
+
+```bash
+docker build \
+  -t java-maven-app:1.1.0-SNAPSHOT \
+  .
+```
+
+This reinforces the mandatory order:
+
+```text
+artifact creation
+before
+containerization
+```
+
+---
+
+## 8.28 Evidence to Capture
+
+Capture:
+
+```text
+Dockerfile
+.dockerignore
+
+docker build output
+
+docker image ls java-maven-app
+
+docker image inspect result
+
+docker run output
+
+docker ps
+
+docker logs java-maven-app-local
+
+curl HTTP 200
+
+expected HTML heading
+
+docker inspect container state
+
+docker stop
+
+HTTP test after stop
+
+docker rm
+
+git status
+
+feature commit
+
+merge commit
+
+GitHub/GitLab synchronization
+```
+
+Do not capture unrelated Docker containers if screenshots can be limited to the capstone container.
+
+---
+
+## 8.29 Cost
+
+Local Docker validation:
+
+```text
+AWS cost: none
+ECR cost: none
+EKS cost: none
+Load balancer cost: none
+```
+
+No cloud resource needs to exist yet.
+
+---
+
+## 8.30 Containerization Completion Checklist
+
+```text
+[ ] feature/containerize-application created
+[ ] executable Maven artifact exists
+[ ] Dockerfile created
+[ ] .dockerignore created
+[ ] Dockerfile reviewed
+[ ] Docker context reviewed
+[ ] image built successfully
+[ ] image tag verified
+[ ] image architecture inspected
+[ ] container started
+[ ] port 8080 mapped correctly
+[ ] Spring Boot logs verified
+[ ] HTTP 200 verified
+[ ] expected application content verified
+[ ] container state inspected
+[ ] container stopped
+[ ] stopped application became unreachable
+[ ] test container removed
+[ ] only Dockerfile and .dockerignore committed
+[ ] commit 07958db represented containerization work
+[ ] feature branch pushed
+[ ] merged using --no-ff
+[ ] merge 35cfa89 represented integration
+[ ] develop synchronized to GitHub
+[ ] develop synchronized to GitLab
+[ ] no cloud infrastructure created
+```
 
 ---
 
