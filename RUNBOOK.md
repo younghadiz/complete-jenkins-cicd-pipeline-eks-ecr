@@ -22760,7 +22760,1667 @@ dual-remote synchronization
 
 # 17. Rollback
 
-To be documented in a later verified documentation batch.
+## 17.1 Objective
+
+Prove that the Kubernetes application can be restored to a previously deployed version if a newer deployment introduces a problem.
+
+A rollback must not be treated as successful merely because:
+
+```text
+kubectl rollout undo
+```
+
+returns without an error.
+
+The complete rollback validation must confirm:
+
+```text
+previous revision exists
+        ↓
+previous image identified
+        ↓
+rollback initiated
+        ↓
+rollout completes
+        ↓
+Deployment uses previous image
+        ↓
+replacement Pod is healthy
+        ↓
+application remains externally reachable
+        ↓
+expected application content is returned
+```
+
+For this capstone, rollback was tested against two real deployment revisions.
+
+---
+
+## 17.2 Verified Versions
+
+The application had two container images available in Amazon ECR:
+
+```text
+Previous deployment:
+1.1.1-1
+
+Current deployment:
+1.1.1-2
+```
+
+Verified previous digest:
+
+```text
+1.1.1-1
+→ sha256:4878a7f7d6b67f10149459944b0f76c07a88d5421f1ee1cb069d53108bc76efe
+```
+
+Verified current digest:
+
+```text
+1.1.1-2
+→ sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+The rollback test deliberately changed the running Deployment from:
+
+```text
+1.1.1-2
+```
+
+back to:
+
+```text
+1.1.1-1
+```
+
+and then restored:
+
+```text
+1.1.1-2
+```
+
+after the rollback had been proven.
+
+---
+
+# Pre-Rollback Verification
+
+## 17.3 Check Current Deployment
+
+Before any rollback:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified pre-rollback image:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+Verified state:
+
+```text
+READY:
+1/1
+
+UP-TO-DATE:
+1
+
+AVAILABLE:
+1
+```
+
+Never begin a rollback without first recording the current good/bad state.
+
+---
+
+## 17.4 Check Rollout History
+
+Run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+Verified before the rollback:
+
+```text
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+```
+
+There were therefore two revisions available.
+
+---
+
+## 17.5 Inspect Revision 1
+
+Run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default \
+  --revision=1
+```
+
+Verified:
+
+```text
+Revision:
+1
+
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-1
+
+Container port:
+8080
+```
+
+---
+
+## 17.6 Inspect Revision 2
+
+Run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default \
+  --revision=2
+```
+
+Verified:
+
+```text
+Revision:
+2
+
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+Container port:
+8080
+```
+
+This proves exactly what each revision represents before changing the Deployment.
+
+---
+
+# ReplicaSet Verification
+
+## 17.7 Inspect ReplicaSets and Images
+
+Run:
+
+```bash
+kubectl get replicasets \
+  --namespace default \
+  -l app=java-maven-app \
+  -o custom-columns='NAME:.metadata.name,REVISION:.metadata.annotations.deployment\.kubernetes\.io/revision,DESIRED:.spec.replicas,CURRENT:.status.replicas,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image'
+```
+
+Verified before rollback:
+
+```text
+java-maven-app-6869cd58d7
+revision 2
+desired 1
+current 1
+ready 1
+image 1.1.1-2
+
+java-maven-app-6df4d9f6d6
+revision 1
+desired 0
+current 0
+image 1.1.1-1
+```
+
+This confirms that Kubernetes retained the previous ReplicaSet required for rollback.
+
+---
+
+# Preserve the Current State
+
+## 17.8 Save Current Image Before Testing Rollback
+
+Before intentionally rolling back, save the image that must be restored later:
+
+```bash
+export CURRENT_IMAGE="$(
+  kubectl get deployment \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+)"
+```
+
+Verify:
+
+```bash
+echo "$CURRENT_IMAGE"
+```
+
+Historical result:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+This step is important because the exercise intentionally changes the live state.
+
+---
+
+## 17.9 Save the Application Endpoint
+
+Retrieve the existing Service hostname:
+
+```bash
+export APP_HOST="$(
+  kubectl get service \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+)"
+```
+
+Verify:
+
+```bash
+echo "$APP_HOST"
+```
+
+The Service and ELB remain the same while the Deployment image changes.
+
+The historical hostname was:
+
+```text
+a20caf1e7dc2c4a61ab0ceb6d4e6ec35-100323687.ca-central-1.elb.amazonaws.com
+```
+
+A recreated environment may have a different hostname.
+
+---
+
+# Perform the Rollback
+
+## 17.10 Roll Back to Revision 1
+
+Run:
+
+```bash
+kubectl rollout undo \
+  deployment/java-maven-app \
+  --namespace default \
+  --to-revision=1
+```
+
+Verified response:
+
+```text
+deployment.apps/java-maven-app rolled back
+```
+
+---
+
+## 17.11 `kubectl apply` Annotation Warning
+
+The rollback also produced this warning conceptually:
+
+```text
+resource was previously managed with kubectl apply
+```
+
+and explained that rollback does not update:
+
+```text
+kubectl.kubernetes.io/last-applied-configuration
+```
+
+This matters because the pipeline normally deploys using:
+
+```bash
+kubectl apply
+```
+
+while:
+
+```bash
+kubectl rollout undo
+```
+
+changes the live Deployment revision independently.
+
+Therefore a future:
+
+```bash
+kubectl apply
+```
+
+using a manifest containing the newer image may move the workload forward again.
+
+This warning must not be ignored in a production rollback strategy.
+
+---
+
+## 17.12 Why This Warning Matters
+
+The application manifests contain a dynamically rendered image:
+
+```yaml
+image: ${IMAGE_NAME}:${IMAGE_TAG}
+```
+
+The normal Jenkins pipeline will render the latest intended image tag.
+
+Therefore:
+
+```text
+manual rollback
+```
+
+and:
+
+```text
+Git/pipeline desired state
+```
+
+can temporarily disagree.
+
+Conceptually:
+
+```text
+Git / Jenkins desired image
+1.1.1-2
+
+        ≠
+
+manually rolled-back runtime
+1.1.1-1
+```
+
+A mature rollback process should eventually reconcile:
+
+```text
+Git
+pipeline
+runtime
+```
+
+rather than leaving them permanently different.
+
+---
+
+# Wait for Rollback
+
+## 17.13 Verify Rollout Completion
+
+Run:
+
+```bash
+kubectl rollout status \
+  deployment/java-maven-app \
+  --namespace default \
+  --timeout=180s
+```
+
+Verified:
+
+```text
+deployment "java-maven-app" successfully rolled out
+```
+
+Do not verify the image before Kubernetes has completed the rollout.
+
+---
+
+# Verify the Rolled-Back Image
+
+## 17.14 Deployment Image After Rollback
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+```
+
+Verified:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-1
+```
+
+This proves the Deployment actually changed versions.
+
+---
+
+## 17.15 Verify Rolled-Back Pod
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Verified rolled-back Pod:
+
+```text
+READY:
+1/1
+
+STATUS:
+Running
+
+RESTARTS:
+0
+```
+
+Historical Pod:
+
+```text
+java-maven-app-6df4d9f6d6-wt95l
+```
+
+The Pod name is ephemeral and must not be hardcoded into reusable commands.
+
+---
+
+## 17.16 Verify Rolled-Back Runtime Image
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+```
+
+Verified rollback state:
+
+```text
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-1
+
+ImageID:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app@sha256:4878a7f7d6b67f10149459944b0f76c07a88d5421f1ee1cb069d53108bc76efe
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+This proves the older ECR image became the actual running container.
+
+---
+
+# Verify Application After Rollback
+
+## 17.17 HTTP Status
+
+Run:
+
+```bash
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Verified after rollback:
+
+```text
+HTTP status: 200
+```
+
+---
+
+## 17.18 Content Test
+
+Run:
+
+```bash
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Verified:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+Therefore the older revision remained functional.
+
+---
+
+# Understand Rollout Revision Behavior
+
+## 17.19 History After Rollback
+
+Run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+Verified after rollback:
+
+```text
+REVISION  CHANGE-CAUSE
+2         <none>
+3         <none>
+```
+
+This is important.
+
+Kubernetes did **not** make revision `1` the new revision number.
+
+Instead, rollback created a new revision:
+
+```text
+revision 3
+```
+
+whose Pod template corresponded to the older image.
+
+---
+
+## 17.20 Rollback Does Not Move Time Backward
+
+Conceptually:
+
+```text
+Revision 1
+image 1.1.1-1
+
+Revision 2
+image 1.1.1-2
+
+rollback to revision 1
+        ↓
+
+Revision 3
+image 1.1.1-1
+```
+
+Kubernetes rollout history is chronological.
+
+Rollback produces a new state entry rather than rewriting history.
+
+This distinction is important when selecting future revision numbers.
+
+---
+
+# Restore the Intended Current Version
+
+## 17.21 Why Restore After the Test
+
+The rollback was a controlled validation exercise.
+
+The intended final application remained:
+
+```text
+1.1.1-2
+```
+
+Therefore after proving the rollback mechanism, restore the latest verified image.
+
+Do not leave the cluster on the deliberately older image merely because the rollback test succeeded.
+
+---
+
+## 17.22 Restore Using the Saved Image
+
+Run:
+
+```bash
+kubectl set image \
+  deployment/java-maven-app \
+  java-maven-app="$CURRENT_IMAGE" \
+  --namespace default
+```
+
+Verified:
+
+```text
+deployment.apps/java-maven-app image updated
+```
+
+This makes the restoration deterministic because:
+
+```text
+CURRENT_IMAGE
+```
+
+was captured before rollback.
+
+---
+
+## 17.23 Why `kubectl set image` Was Used
+
+The rollback test needed to restore the known intended current image directly.
+
+Using:
+
+```bash
+kubectl set image
+```
+
+avoided:
+
+```text
+guessing a rollout revision number
+```
+
+after Kubernetes had already created a new revision during rollback.
+
+The known current image was:
+
+```text
+1.1.1-2
+```
+
+so the restoration explicitly targeted it.
+
+---
+
+# Wait for Restoration
+
+## 17.24 Verify Restored Rollout
+
+Run:
+
+```bash
+kubectl rollout status \
+  deployment/java-maven-app \
+  --namespace default \
+  --timeout=180s
+```
+
+Verified:
+
+```text
+deployment "java-maven-app" successfully rolled out
+```
+
+---
+
+# Verify Restored Deployment
+
+## 17.25 Deployment State
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+```
+
+Verified:
+
+```text
+READY:
+1/1
+
+UP-TO-DATE:
+1
+
+AVAILABLE:
+1
+
+IMAGE:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+---
+
+## 17.26 Restored Image
+
+Run:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+```
+
+Expected:
+
+```text
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+```
+
+---
+
+# Verify Restored Pod
+
+## 17.27 Runtime Verification
+
+Run:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o jsonpath='{range .items[*]}Pod={.metadata.name}{"\n"}Image={.spec.containers[0].image}{"\n"}ImageID={.status.containerStatuses[0].imageID}{"\n"}Ready={.status.containerStatuses[0].ready}{"\n"}Restarts={.status.containerStatuses[0].restartCount}{"\n\n"}{end}'
+```
+
+Verified restored Pod:
+
+```text
+Image:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app:1.1.1-2
+
+ImageID:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app@sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+
+Ready:
+true
+
+Restarts:
+0
+```
+
+The historical restored Pod name was:
+
+```text
+java-maven-app-6869cd58d7-8xk26
+```
+
+Do not depend on that name.
+
+---
+
+# Verify Application After Restoration
+
+## 17.28 HTTP Test
+
+Run:
+
+```bash
+curl -sS \
+  -o /dev/null \
+  -w 'HTTP status: %{http_code}\n' \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/"
+```
+
+Verified:
+
+```text
+HTTP status: 200
+```
+
+---
+
+## 17.29 Content Verification
+
+Run:
+
+```bash
+curl -fsS \
+  --connect-timeout 10 \
+  --max-time 20 \
+  "http://${APP_HOST}/" \
+  | grep -F "Welcome to Java Maven Application"
+```
+
+Verified:
+
+```html
+<h1>Welcome to Java Maven Application</h1>
+```
+
+This confirms restoration did not merely update the Deployment specification; the application remained externally functional.
+
+---
+
+# Final Rollout History
+
+## 17.30 Inspect Final History
+
+Run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+Verified final history:
+
+```text
+REVISION  CHANGE-CAUSE
+3         <none>
+4         <none>
+```
+
+---
+
+## 17.31 Why Revisions 1 and 2 Disappeared From the Short History
+
+After rollback and subsequent restoration, Kubernetes revision numbering continued:
+
+```text
+1 → original old image
+2 → newer image
+3 → rollback-created revision
+4 → restored image
+```
+
+The retained ReplicaSets/history visible at the end represented:
+
+```text
+revision 3
+→ 1.1.1-1
+
+revision 4
+→ 1.1.1-2
+```
+
+The important operational lesson is:
+
+```text
+do not assume a particular revision number
+always inspect rollout history first
+```
+
+before performing a future rollback.
+
+---
+
+# Final ReplicaSets
+
+## 17.32 Verify ReplicaSets
+
+Run:
+
+```bash
+kubectl get replicasets \
+  --namespace default \
+  -l app=java-maven-app \
+  -o custom-columns='NAME:.metadata.name,REVISION:.metadata.annotations.deployment\.kubernetes\.io/revision,DESIRED:.spec.replicas,CURRENT:.status.replicas,READY:.status.readyReplicas,IMAGE:.spec.template.spec.containers[0].image'
+```
+
+Verified final state:
+
+```text
+java-maven-app-6869cd58d7
+revision 4
+desired 1
+current 1
+ready 1
+image 1.1.1-2
+
+java-maven-app-6df4d9f6d6
+revision 3
+desired 0
+current 0
+image 1.1.1-1
+```
+
+This proves the cluster ended in the intended latest state.
+
+---
+
+# Rollback Strategy
+
+## 17.33 Emergency Rollback Workflow
+
+A reusable emergency workflow is:
+
+```text
+detect deployment problem
+        ↓
+inspect current Deployment
+        ↓
+inspect rollout history
+        ↓
+inspect candidate previous revision
+        ↓
+record current image
+        ↓
+rollback
+        ↓
+wait for rollout
+        ↓
+verify Pod/image/digest
+        ↓
+verify application
+        ↓
+investigate failed release
+```
+
+Do not select a revision blindly.
+
+---
+
+## 17.34 Basic Emergency Commands
+
+Inspect:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+Inspect a candidate:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default \
+  --revision=<REVISION>
+```
+
+Rollback:
+
+```bash
+kubectl rollout undo \
+  deployment/java-maven-app \
+  --namespace default \
+  --to-revision=<KNOWN_GOOD_REVISION>
+```
+
+Wait:
+
+```bash
+kubectl rollout status \
+  deployment/java-maven-app \
+  --namespace default \
+  --timeout=180s
+```
+
+Then verify:
+
+```bash
+kubectl get deployment \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+---
+
+# Git/Pipeline Reconciliation
+
+## 17.35 Runtime Rollback Does Not Change Git
+
+Running:
+
+```bash
+kubectl rollout undo
+```
+
+changes Kubernetes runtime state.
+
+It does **not** modify:
+
+```text
+pom.xml
+Jenkinsfile
+deployment.yaml
+Git branch
+Git commit
+ECR tags
+```
+
+Therefore after a real production rollback:
+
+```text
+Git
+and
+runtime
+```
+
+may describe different versions.
+
+---
+
+## 17.36 Real Production Rollback Should Be Reconciled
+
+If version:
+
+```text
+1.1.1-2
+```
+
+is genuinely defective and the system must remain on:
+
+```text
+1.1.1-1
+```
+
+then a follow-up Git/pipeline decision is required.
+
+Possible approaches include:
+
+```text
+revert defective code
+→ commit revert
+→ pipeline produces corrected release
+```
+
+or:
+
+```text
+update desired deployment version
+→ commit
+→ redeploy through controlled pipeline
+```
+
+The correct method depends on the release workflow.
+
+The verified capstone was only testing rollback capability, so the system was deliberately restored to:
+
+```text
+1.1.1-2
+```
+
+afterward.
+
+---
+
+# Rollback vs Revert
+
+## 17.37 Kubernetes Rollback
+
+```text
+kubectl rollout undo
+```
+
+affects:
+
+```text
+live Kubernetes Deployment
+```
+
+It does not alter Git history.
+
+---
+
+## 17.38 Git Revert
+
+```bash
+git revert <commit>
+```
+
+creates a new Git commit that reverses changes from an earlier commit.
+
+This affects:
+
+```text
+source-controlled desired state
+```
+
+but does not automatically change Kubernetes until CI/CD deploys the resulting state.
+
+---
+
+## 17.39 They Solve Different Problems
+
+```text
+Kubernetes rollback
+→ fast runtime recovery
+
+Git revert
+→ source-code/history correction
+```
+
+A production incident may require both:
+
+```text
+immediate Kubernetes rollback
+        ↓
+restore service quickly
+        ↓
+Git correction/revert
+        ↓
+pipeline
+        ↓
+new controlled deployment
+```
+
+---
+
+# ECR Requirement for Rollback
+
+## 17.40 Preserve Previous Images
+
+Rollback worked because the older image:
+
+```text
+1.1.1-1
+```
+
+still existed and was accessible.
+
+Do not delete recent known-good images before the rollback retention window has expired.
+
+An overly aggressive ECR lifecycle policy can break rollback options.
+
+---
+
+## 17.41 Unique Tags Help Rollback
+
+The pipeline creates tags such as:
+
+```text
+1.1.1-1
+1.1.1-2
+```
+
+rather than relying only on:
+
+```text
+latest
+```
+
+This makes deployment history easier to inspect and reproduce.
+
+A stronger production improvement would also make ECR tags:
+
+```text
+IMMUTABLE
+```
+
+or deploy directly by digest.
+
+---
+
+# Rollback Verification by Digest
+
+## 17.42 Rolled-Back Digest
+
+Verified:
+
+```text
+1.1.1-1
+
+sha256:4878a7f7d6b67f10149459944b0f76c07a88d5421f1ee1cb069d53108bc76efe
+```
+
+---
+
+## 17.43 Restored Digest
+
+Verified:
+
+```text
+1.1.1-2
+
+sha256:aec124d06875b4bb3d262209b34bab67194bb8e1e1eec97e54d4671f0cca7d5b
+```
+
+This proves rollback/restoration changed actual container content, not merely metadata.
+
+---
+
+# Rollback Troubleshooting
+
+## 17.44 No Previous Revision Available
+
+If:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default
+```
+
+shows only one usable revision, Kubernetes cannot rollback to an earlier Deployment state.
+
+Options may include:
+
+```text
+deploy a known-good image explicitly
+reapply a previous manifest
+restore from Git/release metadata
+```
+
+Do not invent a revision number.
+
+---
+
+## 17.45 Previous Image No Longer Exists
+
+If a rollback ReplicaSet references an image that has been deleted from ECR, the Pod may fail with:
+
+```text
+ErrImagePull
+ImagePullBackOff
+```
+
+Before relying on rollback, verify the known-good image still exists.
+
+Example:
+
+```bash
+aws ecr describe-images \
+  --repository-name java-maven-app \
+  --image-ids imageTag=1.1.1-1 \
+  --region ca-central-1
+```
+
+---
+
+## 17.46 Rollback Pod Does Not Become Ready
+
+Inspect:
+
+```bash
+kubectl get pods \
+  --namespace default \
+  -l app=java-maven-app \
+  -o wide
+```
+
+Then:
+
+```bash
+kubectl describe pods \
+  --namespace default \
+  -l app=java-maven-app
+```
+
+Then:
+
+```bash
+kubectl logs \
+  deployment/java-maven-app \
+  --namespace default \
+  --tail=100
+```
+
+Possible causes:
+
+```text
+old image unavailable
+application failure
+architecture incompatibility
+cluster issue
+network dependency failure
+```
+
+---
+
+## 17.47 Rollback Works but External HTTP Fails
+
+Check:
+
+```text
+Pod Ready?
+EndpointSlice?
+Service?
+ELB backend?
+```
+
+The Service itself should normally remain unchanged during a Deployment-only rollback.
+
+Commands:
+
+```bash
+kubectl get service \
+  java-maven-app \
+  --namespace default \
+  -o wide
+
+kubectl get endpointslice \
+  --namespace default \
+  -l kubernetes.io/service-name=java-maven-app \
+  -o wide
+```
+
+---
+
+## 17.48 `last-applied-configuration` Warning
+
+The verified rollback produced a warning because:
+
+```text
+Deployment normally managed by kubectl apply
+```
+
+while rollback changed live state separately.
+
+Do not treat the warning as rollback failure.
+
+However, understand that the next normal pipeline:
+
+```text
+envsubst
+→ kubectl apply
+```
+
+may reconcile the Deployment back to the manifest-generated desired image.
+
+---
+
+# Rollback Safety
+
+## 17.49 Record the Current Image First
+
+Before any manual rollback test:
+
+```bash
+export CURRENT_IMAGE="$(
+  kubectl get deployment \
+    java-maven-app \
+    --namespace default \
+    -o jsonpath='{.spec.template.spec.containers[0].image}'
+)"
+```
+
+This creates a reliable restoration target.
+
+Do not rely on memory.
+
+---
+
+## 17.50 Verify the Candidate Revision First
+
+Always run:
+
+```bash
+kubectl rollout history \
+  deployment/java-maven-app \
+  --namespace default \
+  --revision=<REVISION>
+```
+
+before:
+
+```bash
+kubectl rollout undo
+```
+
+This avoids reverting to an unknown image.
+
+---
+
+## 17.51 Never Perform a Blind Rollback in Production
+
+Before rollback, determine:
+
+```text
+incident severity
+known-good revision
+database compatibility
+schema compatibility
+external API compatibility
+whether the old image still works with current data
+```
+
+This simple capstone has no database migration, so those concerns were limited.
+
+They become critical in stateful applications.
+
+---
+
+# Evidence to Capture
+
+## 17.52 Pre-Rollback Evidence
+
+Capture:
+
+```text
+rollout history:
+1
+2
+
+revision 1:
+1.1.1-1
+
+revision 2:
+1.1.1-2
+
+current Deployment:
+1.1.1-2
+```
+
+---
+
+## 17.53 Rollback Evidence
+
+Capture:
+
+```text
+deployment rolled back
+rollout successful
+
+Deployment image:
+1.1.1-1
+
+Pod:
+Ready=true
+Restarts=0
+
+digest:
+sha256:4878a7...
+
+HTTP:
+200
+
+content:
+Welcome to Java Maven Application
+```
+
+---
+
+## 17.54 Restoration Evidence
+
+Capture:
+
+```text
+kubectl set image
+→ image updated
+
+rollout successful
+
+Deployment:
+1.1.1-2
+
+Pod:
+Ready=true
+Restarts=0
+
+digest:
+sha256:aec124...
+
+HTTP:
+200
+
+expected content returned
+```
+
+---
+
+## 17.55 Final History Evidence
+
+Capture:
+
+```text
+REVISION 3
+→ 1.1.1-1
+
+REVISION 4
+→ 1.1.1-2
+```
+
+and final ReplicaSet state:
+
+```text
+revision 4
+desired 1
+ready 1
+1.1.1-2
+
+revision 3
+desired 0
+1.1.1-1
+```
+
+---
+
+# Rollback Completion Checklist
+
+## 17.56 Verification Checklist
+
+```text
+[ ] current Deployment state recorded
+[ ] current image saved before rollback
+[ ] application endpoint saved
+
+[ ] rollout history inspected
+[ ] revision 1 inspected
+[ ] revision 2 inspected
+[ ] revision/image mapping confirmed
+
+[ ] rollback command executed
+[ ] kubectl apply annotation warning understood
+[ ] rollback rollout completed successfully
+
+[ ] Deployment changed to 1.1.1-1
+[ ] rolled-back Pod Running
+[ ] rolled-back Pod Ready=true
+[ ] rolled-back Pod Restarts=0
+[ ] rolled-back digest = sha256:4878a7...
+[ ] rollback HTTP status = 200
+[ ] expected page returned
+
+[ ] rollout history after rollback inspected
+[ ] rollback created a new revision rather than rewriting history
+
+[ ] current image restored using kubectl set image
+[ ] restore rollout completed successfully
+
+[ ] Deployment returned to 1.1.1-2
+[ ] restored Pod Ready=true
+[ ] restored Pod Restarts=0
+[ ] restored digest = sha256:aec124...
+[ ] restored HTTP status = 200
+[ ] expected page returned
+
+[ ] final rollout history inspected
+[ ] final active ReplicaSet uses 1.1.1-2
+[ ] old ReplicaSet retained at zero replicas
+[ ] Git/runtime reconciliation implications documented
+```
+
+---
+
+## 17.57 Verified Rollback Sequence
+
+```text
+Initial
+revision 1 → 1.1.1-1
+revision 2 → 1.1.1-2
+active      → 1.1.1-2
+
+        ↓
+
+kubectl rollout undo
+--to-revision=1
+
+        ↓
+
+Rollback
+revision 3 → 1.1.1-1
+active      → 1.1.1-1
+HTTP        → 200
+
+        ↓
+
+kubectl set image
+→ saved CURRENT_IMAGE
+
+        ↓
+
+Restore
+revision 4 → 1.1.1-2
+active      → 1.1.1-2
+HTTP        → 200
+```
+
+---
+
+## 17.58 Phase 17 Final State
+
+```text
+rollback history inspection
+✅
+
+known-good revision identification
+✅
+
+controlled rollback
+✅
+
+rollback rollout
+✅
+
+older runtime image verification
+✅
+
+rollback HTTP verification
+✅
+
+rollback content verification
+✅
+
+revision behavior understood
+✅
+
+deterministic restoration
+✅
+
+restored runtime digest
+✅
+
+restored HTTP verification
+✅
+
+Git/runtime reconciliation documented
+✅
+```
+
+**Rollback is complete and the application has been restored to the intended `1.1.1-2` deployment.**
 
 ---
 
