@@ -8721,7 +8721,1473 @@ Pipeline Preparation is now complete.
 
 # 10. Infrastructure Preparation
 
-To be documented in a later verified documentation batch.
+## 10.1 Objective
+
+Prepare the AWS infrastructure plan, names, configuration values, tooling, verification commands, cost expectations, and reproducible provisioning commands before actually creating chargeable cloud resources.
+
+The project order remains:
+
+```text
+pipeline preparation
+→ infrastructure preparation
+→ security configuration
+→ server and cloud provisioning
+```
+
+Therefore this phase answers:
+
+```text
+What resources will be created?
+What will they be called?
+Where will they run?
+What configuration will they use?
+What commands will create them?
+What will they cost?
+What must exist before provisioning?
+How will success be verified?
+How will they later be removed?
+```
+
+The resources are actually created in:
+
+```text
+Phase 12 — Server and Cloud Provisioning
+```
+
+---
+
+## 10.2 Nana-Aligned Infrastructure Scope
+
+The project intentionally uses a simple infrastructure design close to the TechWorld with Nana learning approach.
+
+Required cloud components:
+
+```text
+DigitalOcean
+└── Jenkins server
+
+AWS
+├── Amazon ECR
+│   └── java-maven-app
+│
+└── Amazon EKS
+    ├── cluster: java-maven-eks
+    └── managed nodegroup: java-maven-nodes
+```
+
+The Kubernetes application later creates:
+
+```text
+Deployment
+└── java-maven-app
+
+Service
+└── java-maven-app
+    └── type: LoadBalancer
+```
+
+The `LoadBalancer` Service later causes AWS to provision an external load balancer.
+
+---
+
+## 10.3 What Is Not Required
+
+This Nana-aligned implementation deliberately avoids additional infrastructure such as:
+
+```text
+Terraform
+Helm
+Argo CD
+AWS Load Balancer Controller
+Ingress
+Route 53
+ACM
+NAT Gateway custom design
+custom VPC Terraform modules
+Fargate
+multiple node groups
+multi-environment clusters
+Prometheus/Grafana infrastructure
+service mesh
+```
+
+Those may be useful in larger production systems but are not necessary for this learning project.
+
+---
+
+## 10.4 AWS Region
+
+Verified project region:
+
+```text
+ca-central-1
+```
+
+All AWS resources in this project should use the same region unless there is a clear reason otherwise.
+
+Set locally:
+
+```bash
+export AWS_REGION=ca-central-1
+export AWS_DEFAULT_REGION=ca-central-1
+```
+
+Verify:
+
+```bash
+printf 'AWS_REGION=%s\n' "$AWS_REGION"
+printf 'AWS_DEFAULT_REGION=%s\n' "$AWS_DEFAULT_REGION"
+```
+
+Expected:
+
+```text
+AWS_REGION=ca-central-1
+AWS_DEFAULT_REGION=ca-central-1
+```
+
+---
+
+## 10.5 Verify AWS CLI Availability
+
+LOCAL:
+
+```bash
+aws --version
+```
+
+Verify authentication without exposing credentials:
+
+```bash
+aws sts get-caller-identity
+```
+
+This command may display:
+
+```text
+AWS account ID
+IAM ARN
+user/role identifier
+```
+
+These are identifiers rather than secret keys.
+
+Never display:
+
+```text
+AWS_SECRET_ACCESS_KEY
+AWS_SESSION_TOKEN
+passwords
+private keys
+```
+
+in the runbook or screenshots.
+
+---
+
+## 10.6 Determine the AWS Account ID Programmatically
+
+The ECR registry URL contains the AWS account ID.
+
+Do not hardcode a reusable runbook around another person's account.
+
+Retrieve it:
+
+```bash
+export AWS_ACCOUNT_ID="$(
+  aws sts get-caller-identity \
+    --query Account \
+    --output text
+)"
+```
+
+Verify:
+
+```bash
+printf 'AWS account: %s\n' "$AWS_ACCOUNT_ID"
+```
+
+Verified account used by this specific project:
+
+```text
+002184382122
+```
+
+For reusable documentation use:
+
+```text
+<AWS_ACCOUNT_ID>
+```
+
+---
+
+## 10.7 Verify Required Local Cloud Tools
+
+Run:
+
+```bash
+echo "===== AWS CLI ====="
+aws --version
+
+echo
+echo "===== eksctl ====="
+eksctl version
+
+echo
+echo "===== kubectl ====="
+kubectl version --client
+
+echo
+echo "===== Docker ====="
+docker --version
+```
+
+Verified `eksctl` version during final source recovery:
+
+```text
+0.229.0-dev+489531af5.2026-07-01T23:39:06Z
+```
+
+The runbook does not require that exact build.
+
+The important requirement is a supported `eksctl` version compatible with the target EKS Kubernetes version.
+
+---
+
+## 10.8 Resource Naming Plan
+
+Use predictable application-specific names.
+
+```text
+Application:
+java-maven-app
+
+AWS Region:
+ca-central-1
+
+ECR Repository:
+java-maven-app
+
+EKS Cluster:
+java-maven-eks
+
+EKS Nodegroup:
+java-maven-nodes
+
+Kubernetes Namespace:
+default
+```
+
+Define them:
+
+```bash
+export APP_NAME=java-maven-app
+export ECR_REPOSITORY=java-maven-app
+export EKS_CLUSTER_NAME=java-maven-eks
+export EKS_NODEGROUP_NAME=java-maven-nodes
+export K8S_NAMESPACE=default
+```
+
+Verify:
+
+```bash
+printf 'APP_NAME=%s\n' "$APP_NAME"
+printf 'ECR_REPOSITORY=%s\n' "$ECR_REPOSITORY"
+printf 'EKS_CLUSTER_NAME=%s\n' "$EKS_CLUSTER_NAME"
+printf 'EKS_NODEGROUP_NAME=%s\n' "$EKS_NODEGROUP_NAME"
+printf 'K8S_NAMESPACE=%s\n' "$K8S_NAMESPACE"
+```
+
+---
+
+## 10.9 Construct the ECR Registry Values
+
+Registry server:
+
+```text
+<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com
+```
+
+Repository URI:
+
+```text
+<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/java-maven-app
+```
+
+Create the shell values:
+
+```bash
+export ECR_REGISTRY_SERVER="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+export ECR_IMAGE_NAME="${ECR_REGISTRY_SERVER}/${ECR_REPOSITORY}"
+```
+
+Verify:
+
+```bash
+printf 'ECR registry: %s\n' "$ECR_REGISTRY_SERVER"
+printf 'ECR image repository: %s\n' "$ECR_IMAGE_NAME"
+```
+
+Verified project values were:
+
+```text
+Registry:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com
+
+Repository:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+```
+
+---
+
+## 10.10 ECR Configuration Plan
+
+Verified final ECR repository configuration:
+
+```text
+Repository:
+java-maven-app
+
+Region:
+ca-central-1
+
+Tag mutability:
+MUTABLE
+
+Scan on push:
+true
+
+Encryption:
+AES256
+```
+
+This is the configuration the reusable command must reproduce.
+
+---
+
+## 10.11 Reproducible ECR Creation Command
+
+The verbatim original creation command is not exposed in the recovered capstone transcript.
+
+The following command explicitly reproduces the verified final configuration.
+
+```text
+REPRODUCIBLE IMPLEMENTATION
+```
+
+```bash
+aws ecr create-repository \
+  --repository-name java-maven-app \
+  --image-tag-mutability MUTABLE \
+  --image-scanning-configuration scanOnPush=true \
+  --encryption-configuration encryptionType=AES256 \
+  --region ca-central-1
+```
+
+Do **not execute this command during Infrastructure Preparation**.
+
+It belongs to:
+
+```text
+Phase 12 — Server and Cloud Provisioning
+```
+
+At this phase, save and review the command only.
+
+---
+
+## 10.12 Why Scan on Push Is Enabled
+
+Verified:
+
+```text
+ScanOnPush: true
+```
+
+This allows ECR to perform image scanning when container images are pushed.
+
+For this project it adds a useful security control without introducing another external scanning system.
+
+Additional image-security tooling such as Trivy may be added later.
+
+---
+
+## 10.13 ECR Tag Mutability
+
+Verified:
+
+```text
+MUTABLE
+```
+
+However, the CI/CD pipeline produces unique tags such as:
+
+```text
+1.1.1-1
+1.1.1-2
+```
+
+Therefore normal operation still avoids intentionally overwriting the same deployment tag.
+
+A future production improvement would be:
+
+```text
+IMMUTABLE
+```
+
+to make repository-level enforcement stronger.
+
+Do not silently change the historical project configuration.
+
+---
+
+## 10.14 ECR Encryption
+
+Verified:
+
+```text
+AES256
+```
+
+This uses ECR's server-side encryption.
+
+A customer-managed KMS key is not required for this basic learning project.
+
+Future environments with compliance requirements may use KMS-based encryption.
+
+---
+
+## 10.15 Planned ECR Verification Commands
+
+After provisioning later:
+
+```bash
+aws ecr describe-repositories \
+  --repository-names java-maven-app \
+  --region ca-central-1 \
+  --query 'repositories[0].{
+    RepositoryName:repositoryName,
+    RepositoryUri:repositoryUri,
+    TagMutability:imageTagMutability,
+    ScanOnPush:imageScanningConfiguration.scanOnPush,
+    EncryptionType:encryptionConfiguration.encryptionType
+  }' \
+  --output yaml
+```
+
+Expected:
+
+```text
+RepositoryName: java-maven-app
+TagMutability: MUTABLE
+ScanOnPush: true
+EncryptionType: AES256
+```
+
+---
+
+## 10.16 EKS Configuration Plan
+
+Verified final EKS cluster:
+
+```text
+Cluster:
+java-maven-eks
+
+Region:
+ca-central-1
+
+Created with:
+eksctl
+
+Kubernetes version:
+1.35
+```
+
+Verified nodegroup:
+
+```text
+Name:
+java-maven-nodes
+
+Type:
+managed
+
+Capacity:
+ON_DEMAND
+
+Instance type:
+t3.small
+
+Minimum:
+1
+
+Desired:
+1
+
+Maximum:
+2
+
+AMI family/result:
+AL2023_x86_64_STANDARD
+```
+
+---
+
+## 10.17 Why a Small Managed Nodegroup Is Used
+
+This capstone is a learning environment.
+
+The application requires only one replica.
+
+Therefore a small nodegroup is sufficient:
+
+```text
+minimum = 1
+desired = 1
+maximum = 2
+```
+
+This limits unnecessary EC2 cost while still allowing the managed nodegroup to scale up to two nodes if required.
+
+---
+
+## 10.18 Reproducible EKS Creation Command
+
+The exact historical creation command is not currently exposed verbatim in the recoverable thread.
+
+The following command follows the same Nana-style `eksctl` approach and reproduces the verified configuration.
+
+```text
+REPRODUCIBLE IMPLEMENTATION
+```
+
+```bash
+eksctl create cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --version 1.35 \
+  --nodegroup-name java-maven-nodes \
+  --node-type t3.small \
+  --nodes 1 \
+  --nodes-min 1 \
+  --nodes-max 2 \
+  --managed
+```
+
+Do **not run this command during Infrastructure Preparation**.
+
+It will create chargeable AWS resources.
+
+Execute it only during:
+
+```text
+Phase 12 — Server and Cloud Provisioning
+```
+
+after Security Configuration has been completed.
+
+---
+
+## 10.19 What `eksctl create cluster` Will Create
+
+A simple `eksctl` cluster creation may create or manage AWS resources including:
+
+```text
+EKS control plane
+VPC networking
+public/private subnets as selected by eksctl defaults
+security groups
+IAM roles
+EC2 managed node group
+Auto Scaling Group
+launch template
+network interfaces
+CloudFormation stacks
+```
+
+Do not assume the EKS cluster is the only chargeable resource involved.
+
+---
+
+## 10.20 Verified Resulting Cluster Networking
+
+The final cluster later showed:
+
+```text
+EndpointPublicAccess:
+true
+
+EndpointPrivateAccess:
+false
+
+PublicAccessCidrs:
+0.0.0.0/0
+```
+
+This describes the **verified project state**.
+
+It should not be interpreted as the preferred security posture for every production cluster.
+
+Restricting EKS API access is discussed in:
+
+```text
+Phase 11 — Security Configuration
+```
+
+---
+
+## 10.21 Verified EKS VPC Outcome
+
+The final environment used an `eksctl`-created VPC and subnets.
+
+The exact IDs are environment-specific and must not be hardcoded into a reusable project.
+
+Examples of environment-specific values include:
+
+```text
+vpc-...
+subnet-...
+sg-...
+```
+
+A new `eksctl create cluster` execution will normally produce different IDs.
+
+Therefore reusable commands should use resource names and configuration rather than copying old generated AWS IDs.
+
+---
+
+## 10.22 Planned EKS Verification
+
+After provisioning:
+
+```bash
+eksctl get cluster \
+  --region ca-central-1
+```
+
+Expected cluster:
+
+```text
+java-maven-eks
+```
+
+Then:
+
+```bash
+eksctl get nodegroup \
+  --cluster java-maven-eks \
+  --region ca-central-1
+```
+
+Expected:
+
+```text
+java-maven-nodes
+ACTIVE
+managed
+t3.small
+```
+
+---
+
+## 10.23 Planned AWS API Verification
+
+Cluster:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1 \
+  --query 'cluster.{
+    Name:name,
+    Version:version,
+    Status:status,
+    EndpointPublicAccess:resourcesVpcConfig.endpointPublicAccess,
+    EndpointPrivateAccess:resourcesVpcConfig.endpointPrivateAccess
+  }' \
+  --output yaml
+```
+
+Nodegroup:
+
+```bash
+aws eks describe-nodegroup \
+  --cluster-name java-maven-eks \
+  --nodegroup-name java-maven-nodes \
+  --region ca-central-1 \
+  --query 'nodegroup.{
+    Name:nodegroupName,
+    Status:status,
+    CapacityType:capacityType,
+    InstanceTypes:instanceTypes,
+    Desired:scalingConfig.desiredSize,
+    Minimum:scalingConfig.minSize,
+    Maximum:scalingConfig.maxSize,
+    AmiType:amiType
+  }' \
+  --output yaml
+```
+
+Expected configuration:
+
+```text
+CapacityType:
+ON_DEMAND
+
+InstanceTypes:
+t3.small
+
+Desired:
+1
+
+Minimum:
+1
+
+Maximum:
+2
+```
+
+---
+
+## 10.24 Kubeconfig Planning
+
+The local workstation must later be able to communicate with EKS.
+
+The standard configuration command is:
+
+```bash
+aws eks update-kubeconfig \
+  --name java-maven-eks \
+  --region ca-central-1
+```
+
+This writes or updates local Kubernetes configuration.
+
+Do not commit:
+
+```text
+~/.kube/config
+```
+
+to Git.
+
+The project `.gitignore` already protects common kubeconfig locations/files.
+
+---
+
+## 10.25 Planned Kubernetes Verification
+
+After the cluster is created and kubeconfig is configured:
+
+```bash
+kubectl config current-context
+```
+
+Then:
+
+```bash
+kubectl cluster-info
+```
+
+Then:
+
+```bash
+kubectl get nodes -o wide
+```
+
+Expected:
+
+```text
+1 Ready node
+instance type t3.small
+architecture amd64/x86_64
+```
+
+The verified final worker node used:
+
+```text
+Amazon Linux 2023
+amd64
+t3.small
+```
+
+---
+
+## 10.26 Architecture Compatibility
+
+The local Apple Silicon development image was:
+
+```text
+arm64
+```
+
+The EKS node is:
+
+```text
+amd64
+```
+
+Therefore the image deployed to EKS should be built on an AMD64-compatible Jenkins environment or explicitly built for:
+
+```text
+linux/amd64
+```
+
+The project resolves this naturally because Jenkins on DigitalOcean builds the image that is pushed to ECR.
+
+Do not push the locally built Mac ARM64 validation image as the EKS deployment image unless multi-platform compatibility has been confirmed.
+
+---
+
+## 10.27 ECR Authentication Plan
+
+After the repository is created, Docker authenticates using a temporary ECR password generated by AWS CLI.
+
+Command:
+
+```bash
+aws ecr get-login-password \
+  --region ca-central-1 \
+  | docker login \
+      --username AWS \
+      --password-stdin \
+      "${AWS_ACCOUNT_ID}.dkr.ecr.ca-central-1.amazonaws.com"
+```
+
+The ECR password itself must not be stored in:
+
+```text
+Jenkinsfile
+Git
+README
+RUNBOOK
+shell script
+```
+
+The Jenkins Shared Library later generates the temporary password at runtime.
+
+---
+
+## 10.28 Jenkins AWS Runtime Requirements
+
+Before Jenkins can push and deploy, its runtime must eventually contain:
+
+```text
+Docker
+AWS CLI
+kubectl
+envsubst
+AWS/EKS authentication support
+kubeconfig access
+```
+
+Preparation checklist:
+
+```text
+Docker available in Jenkins
+AWS CLI planned
+kubectl planned
+envsubst planned
+kubeconfig location planned
+AWS credential ID planned
+```
+
+Installation belongs to:
+
+```text
+Phase 12 — Server and Cloud Provisioning
+```
+
+---
+
+## 10.29 Jenkins AWS Configuration Values
+
+The final application Jenkinsfile requires:
+
+```text
+registryType:
+ecr
+
+awsRegion:
+ca-central-1
+
+ecrCredentialsId:
+aws_ecr_creds
+
+ecrRegistryServer:
+<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com
+
+imageName:
+<AWS_ACCOUNT_ID>.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+```
+
+These values can be planned before provisioning.
+
+The ECR repository URI should be verified after actual resource creation before the pipeline is run.
+
+---
+
+## 10.30 AWS Deployment Feature Branch
+
+The historical application repository later used:
+
+```text
+feature/configure-aws-deployment
+```
+
+to configure the project-specific ECR values.
+
+That work produced:
+
+```text
+86a5f33
+ci: configure AWS ECR deployment
+```
+
+and was merged into `develop` as:
+
+```text
+e217b83
+merge: configure AWS ECR deployment
+```
+
+This configuration came after the initial generic pipeline preparation.
+
+Do not combine:
+
+```text
+b6185a1
+```
+
+and:
+
+```text
+86a5f33
+```
+
+into one historical commit.
+
+They represent separate steps.
+
+---
+
+## 10.31 Generic Jenkinsfile Before AWS Values
+
+Before project-specific cloud values are known:
+
+```groovy
+@Library('jenkins-shared-library') _
+
+singleServicePipeline(
+    appName: 'java-maven-app',
+
+    appDir: '.',
+
+    manifestDir: 'kubernetes',
+
+    registryType: 'ecr',
+
+    imageName: '<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/java-maven-app',
+
+    awsRegion: '<AWS_REGION>',
+
+    ecrRegistryServer: '<AWS_ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com',
+
+    ecrCredentialsId: 'aws_ecr_creds',
+
+    gitCredentialsId: 'github-token',
+
+    repositoryUrl: 'https://github.com/younghadiz/complete-jenkins-cicd-pipeline-eks-ecr.git',
+
+    namespace: 'default'
+)
+```
+
+This is safe to prepare before cloud creation.
+
+---
+
+## 10.32 Final Verified AWS Values
+
+The project eventually used:
+
+```text
+AWS_ACCOUNT_ID:
+002184382122
+
+AWS_REGION:
+ca-central-1
+
+ECR_REPOSITORY:
+java-maven-app
+```
+
+Result:
+
+```text
+ECR_REGISTRY_SERVER:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com
+```
+
+and:
+
+```text
+IMAGE_NAME:
+002184382122.dkr.ecr.ca-central-1.amazonaws.com/java-maven-app
+```
+
+Again, the account ID is an AWS resource identifier, not a secret credential.
+
+---
+
+## 10.33 Infrastructure Dependency Order
+
+The cloud work must follow this dependency sequence:
+
+```text
+AWS authentication verified
+        ↓
+IAM/security prepared
+        ↓
+ECR repository created
+        ↓
+EKS cluster created
+        ↓
+managed nodegroup becomes Ready
+        ↓
+kubeconfig configured
+        ↓
+Jenkins AWS/EKS tooling verified
+        ↓
+pipeline allowed to push/deploy
+```
+
+Do not run the deployment pipeline against resources that do not yet exist.
+
+---
+
+## 10.34 Cost Warning Before EKS Provisioning
+
+Amazon EKS is chargeable while the cluster exists.
+
+The project can also create charges from:
+
+```text
+EKS control plane
+EC2 t3.small worker node
+EBS storage
+Elastic Load Balancer
+public IPv4 usage where applicable
+data transfer
+ECR storage
+```
+
+The Kubernetes `LoadBalancer` Service later adds another chargeable AWS resource.
+
+Do not create the EKS cluster until you are ready to continue through deployment, verification, documentation evidence, and cleanup.
+
+---
+
+## 10.35 DigitalOcean Cost Warning
+
+Jenkins is hosted on a DigitalOcean Droplet.
+
+That server may continue incurring cost independently of AWS.
+
+Do not automatically delete the Jenkins server during project cleanup if it is used for other TechWorld with Nana exercises.
+
+Review its purpose before deletion.
+
+---
+
+## 10.36 ECR Cost Consideration
+
+ECR charges for image storage beyond any applicable free allowances.
+
+The pipeline creates uniquely tagged images such as:
+
+```text
+1.1.1-1
+1.1.1-2
+```
+
+and container pushes may also leave untagged manifest objects.
+
+A future production improvement is an ECR lifecycle policy to remove:
+
+```text
+old images
+untagged images
+superseded development images
+```
+
+Do not introduce lifecycle deletion while evidence is still needed for this capstone.
+
+---
+
+## 10.37 Prepare Cleanup Commands Before Provisioning
+
+Before creating cloud resources, know how they will be removed.
+
+Application Service:
+
+```bash
+kubectl delete service \
+  java-maven-app \
+  --namespace default
+```
+
+EKS cluster:
+
+```bash
+eksctl delete cluster \
+  --name java-maven-eks \
+  --region ca-central-1
+```
+
+ECR repository, only if intentionally removing it:
+
+```bash
+aws ecr delete-repository \
+  --repository-name java-maven-app \
+  --region ca-central-1 \
+  --force
+```
+
+Actual cleanup occurs in:
+
+```text
+Phase 20 — Cleanup
+```
+
+---
+
+## 10.38 Why Delete the LoadBalancer Service First
+
+The Kubernetes Service contains:
+
+```yaml
+type: LoadBalancer
+```
+
+AWS therefore provisions an external load balancer.
+
+During cleanup, remove the Kubernetes `LoadBalancer` Service before deleting the EKS cluster where practical.
+
+This gives Kubernetes/AWS an opportunity to clean up the cloud load balancer normally.
+
+Then verify the load balancer has actually disappeared before considering cleanup complete.
+
+---
+
+## 10.39 Infrastructure Preparation Security Boundary
+
+This phase deliberately does **not** yet create:
+
+```text
+AWS access keys
+Jenkins AWS users/roles
+IAM policies
+EKS access authorization
+security-group rules
+```
+
+Those belong to:
+
+```text
+Phase 11 — Security Configuration
+```
+
+The project order must remain:
+
+```text
+infrastructure preparation
+→ security configuration
+→ provisioning
+```
+
+---
+
+## 10.40 Do Not Use AWS Root Credentials
+
+The AWS root account must not be used by Jenkins or normal project automation.
+
+Use an appropriate IAM identity.
+
+The exact Jenkins IAM/permissions design is documented in the next phase.
+
+---
+
+## 10.41 Infrastructure Preparation Verification Commands
+
+Run locally:
+
+```bash
+echo "===== AWS CLI ====="
+aws --version
+
+echo
+echo "===== AWS Identity ====="
+aws sts get-caller-identity
+
+echo
+echo "===== eksctl ====="
+eksctl version
+
+echo
+echo "===== kubectl ====="
+kubectl version --client
+
+echo
+echo "===== Docker ====="
+docker --version
+```
+
+Then:
+
+```bash
+export AWS_REGION=ca-central-1
+
+export AWS_ACCOUNT_ID="$(
+  aws sts get-caller-identity \
+    --query Account \
+    --output text
+)"
+
+export ECR_REPOSITORY=java-maven-app
+
+export ECR_REGISTRY_SERVER="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+export ECR_IMAGE_NAME="${ECR_REGISTRY_SERVER}/${ECR_REPOSITORY}"
+```
+
+Verify:
+
+```bash
+echo "Region: $AWS_REGION"
+echo "ECR repository: $ECR_REPOSITORY"
+echo "ECR registry server: $ECR_REGISTRY_SERVER"
+echo "ECR image name: $ECR_IMAGE_NAME"
+```
+
+Do not print secret environment variables.
+
+---
+
+## 10.42 Check Whether Resources Already Exist
+
+Before any creation command, always check first.
+
+ECR:
+
+```bash
+aws ecr describe-repositories \
+  --repository-names java-maven-app \
+  --region ca-central-1
+```
+
+If the repository does not exist, AWS returns a repository-not-found error.
+
+Do not create a duplicate simply because a script assumed it was absent.
+
+EKS:
+
+```bash
+eksctl get cluster \
+  --region ca-central-1
+```
+
+Check specifically for:
+
+```text
+java-maven-eks
+```
+
+Then:
+
+```bash
+aws eks describe-cluster \
+  --name java-maven-eks \
+  --region ca-central-1
+```
+
+Do not issue another create-cluster command if the intended cluster already exists.
+
+---
+
+## 10.43 Idempotency Limitation
+
+The simple Nana-style commands:
+
+```bash
+aws ecr create-repository ...
+```
+
+and:
+
+```bash
+eksctl create cluster ...
+```
+
+are resource-creation commands.
+
+They are not intended to be rerun blindly.
+
+Always perform existence checks first.
+
+A future Infrastructure-as-Code approach could manage desired state more declaratively.
+
+Terraform is intentionally not required in this version.
+
+---
+
+## 10.44 Evidence to Capture Before Provisioning
+
+Capture:
+
+```text
+aws --version
+eksctl version
+kubectl client version
+Docker version
+
+AWS region
+resource-name plan
+
+ECR planned configuration
+EKS planned configuration
+
+cost warning acknowledged
+cleanup commands prepared
+```
+
+Do not capture:
+
+```text
+AWS secret keys
+session tokens
+Jenkins tokens
+GitHub tokens
+private keys
+```
+
+---
+
+## 10.45 Verified Final Infrastructure for Comparison
+
+After provisioning and deployment, the final project was later verified as:
+
+```text
+ECR
+├── repository: java-maven-app
+├── region: ca-central-1
+├── scan-on-push: true
+├── tag mutability: MUTABLE
+└── encryption: AES256
+
+EKS
+├── cluster: java-maven-eks
+├── version: 1.35
+├── region: ca-central-1
+└── nodegroup
+    ├── name: java-maven-nodes
+    ├── type: managed
+    ├── capacity: ON_DEMAND
+    ├── instance: t3.small
+    ├── minimum: 1
+    ├── desired: 1
+    └── maximum: 2
+```
+
+These verified values are the target state for the reproducible commands above.
+
+---
+
+## 10.46 Infrastructure Preparation Completion Checklist
+
+```text
+[ ] AWS region selected
+[ ] AWS CLI available
+[ ] AWS identity can be verified safely
+[ ] AWS account ID retrievable programmatically
+[ ] eksctl available
+[ ] kubectl available
+[ ] Docker available
+[ ] application resource names fixed
+[ ] ECR repository name fixed
+[ ] ECR registry format understood
+[ ] ECR target configuration documented
+[ ] ECR reproducible creation command prepared
+[ ] EKS cluster name fixed
+[ ] EKS nodegroup name fixed
+[ ] EKS version planned
+[ ] node type planned
+[ ] min/desired/max nodes planned
+[ ] EKS reproducible creation command prepared
+[ ] kubeconfig command prepared
+[ ] cluster verification commands prepared
+[ ] nodegroup verification commands prepared
+[ ] architecture compatibility reviewed
+[ ] Jenkins AWS tool requirements identified
+[ ] cleanup commands prepared
+[ ] EKS cost warning reviewed
+[ ] EC2 cost warning reviewed
+[ ] load-balancer cost warning reviewed
+[ ] ECR storage cost reviewed
+[ ] no new chargeable resource created during preparation
+```
+
+---
+
+## 10.47 Phase 10 Final State
+
+Infrastructure Preparation is complete when the project has a fully defined target state and executable provisioning plan without having prematurely created resources.
+
+```text
+AWS Region
+    ✅ ca-central-1
+
+ECR Repository
+    ✅ java-maven-app
+
+ECR Scan on Push
+    ✅ true
+
+ECR Encryption
+    ✅ AES256
+
+EKS Cluster
+    ✅ java-maven-eks
+
+Managed Nodegroup
+    ✅ java-maven-nodes
+
+Node Type
+    ✅ t3.small
+
+Node Scaling
+    ✅ 1 / 1 / 2
+
+Kubernetes Version
+    ✅ 1.35
+
+Provisioning Commands
+    ✅ prepared
+
+Verification Commands
+    ✅ prepared
+
+Cleanup Commands
+    ✅ prepared
+
+Cost Warning
+    ✅ documented
+
+Resources Provisioned
+    ❌ not yet — intentionally
+```
 
 ---
 
